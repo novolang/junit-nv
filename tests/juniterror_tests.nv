@@ -1,0 +1,61 @@
+// juniterror_tests.nv — the division the error type exists to make.
+//
+// RED ON PURPOSE: every assertion reaches `not implemented:
+// junit-nv.juniterror.<fn>`.  What is asserted is that a fault in the
+// report being written is told apart from a fault in a report being
+// read, because the two have different responses.
+
+use std.test
+use juniterror
+
+@test
+fn test_a_writer_fault_is_this_program_and_a_reader_fault_is_not() [io]
+    // A tool merging twenty reports logs somebody else's bad file and
+    // carries on.  It stops on its own, because a report it cannot
+    // write is a bug in the program producing it.
+    test.case("the two faults the writer raises")
+    test.assert(juniterror.is_writer_fault(JunitUnwritable("system-out", 8, 1)))
+    test.assert(juniterror.is_writer_fault(JunitTimeTooPrecise(1500, 3)))
+
+    test.case("and every fault about a file somebody else wrote")
+    test.assert(not juniterror.is_writer_fault(JunitNotXml(120, "unclosed element")))
+    test.assert(not juniterror.is_writer_fault(JunitWrongRoot("html")))
+    test.assert(not juniterror.is_writer_fault(JunitMissingAttr("testcase", "name")))
+    test.assert(not juniterror.is_writer_fault(JunitBadTime("testsuite", "soon")))
+    test.assert(not juniterror.is_writer_fault(JunitTwoOutcomes("t")))
+
+@test
+fn test_the_code_is_stable_and_carries_nothing_the_document_held() [io]
+    // A metric label built from `message()` would put a file's own
+    // element names into a time series database.
+    test.case("one short code per arm")
+    test.assert(juniterror.code(JunitNotXml(0, "x")) == "not_xml")
+    test.assert(juniterror.code(JunitWrongRoot("html")) == "wrong_root")
+    test.assert(juniterror.code(JunitMissingAttr("testcase", "name")) == "missing_attr")
+    test.assert(juniterror.code(JunitBadTime("testsuite", "soon")) == "bad_time")
+    test.assert(juniterror.code(JunitTwoOutcomes("t")) == "two_outcomes")
+    test.assert(juniterror.code(JunitUnwritable("system-out", 8, 1)) == "unwritable")
+    test.assert(juniterror.code(JunitTimeTooPrecise(1500, 3)) == "time_too_precise")
+
+    test.case("and the same fault with different contents has the same code")
+    test.assert(juniterror.code(JunitWrongRoot("html")) == juniterror.code(JunitWrongRoot("rss")))
+
+@test
+fn test_an_offset_is_there_when_there_is_a_character_to_point_at() [io]
+    test.case("the two faults that know a position")
+    test.assert(juniterror.offset(JunitNotXml(120, "unclosed element")) == 120)
+    test.assert(juniterror.offset(JunitUnwritable("system-out", 8, 1)) == 8)
+
+    test.case("and -1 for the ones that do not, so a caller can print a line either way")
+    test.assert(juniterror.offset(JunitWrongRoot("html")) == 0 - 1)
+    test.assert(juniterror.offset(JunitTwoOutcomes("t")) == 0 - 1)
+
+@test
+fn test_the_message_says_what_was_found() [io]
+    // The message is for a log.  It names the element, the attribute
+    // or the character, because an operator reading a merge tool's
+    // output has twenty files and needs to know which one.
+    test.case("every arm has one")
+    test.assert(str.len(JunitWrongRoot("html").message()) > 0)
+    test.assert(str.len(JunitUnwritable("system-out", 8, 1).message()) > 0)
+    test.assert(str.len(JunitTimeTooPrecise(1500, 3).message()) > 0)

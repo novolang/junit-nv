@@ -1,0 +1,132 @@
+// juniterror.nv — every way a report is refused, and which side of the
+// pipe the fault is on.
+//
+// A READ FAULT AND A WRITE FAULT ARE DIFFERENT PROBLEMS
+//
+// A read fault says a file somebody else produced is not the format it
+// claims to be, and the response is to name the file and carry on with
+// the rest of the run.  A write fault says the report this program is
+// producing cannot be represented, and the response is to fix the
+// program, because the alternative is a file that no parser will read
+// back.  `is_writer_fault` is the one function that separates them, so
+// a caller aggregating reports does not treat its own bug as somebody
+// else's bad input.
+//
+// THE UNWRITABLE CHARACTER IS THE FAULT THAT MATTERS
+//
+// `JunitUnwritable` is the one a real run meets.  A `system-out`
+// element carries whatever the test printed, and a test that printed a
+// progress bar printed a carriage return, an escape byte, or a NUL.
+// XML 1.0 section 2.2 admits tab, newline, carriage return and
+// everything from U+0020 up; it admits no other control character, and
+// there is no escape for one — `&#1;` is as ill-formed as the byte.
+// So a writer has three choices: emit it and produce a file that
+// nothing reads back, drop it silently, or refuse.  This package
+// refuses by default and offers `junitwrite.sanitize_text` as the
+// explicit way to drop, so that losing a byte is something a caller
+// wrote down.
+
+// Why a report could not be read or could not be written.
+//
+// ```novo
+// use juniterror
+//
+// fn main() [io]
+//     println(JunitWrongRoot("html").message())
+// ```
+pub enum JunitFault
+    // The text is not well-formed XML.  `at` is the byte offset the
+    // XML parser stopped at, and `why` is its own description.  A READ
+    // fault.
+    JunitNotXml(at: Int, why: Str)
+    // The document is well-formed XML whose root element is neither
+    // `testsuites` nor `testsuite`.  `found` is the element name that
+    // was there, so a message can say what the file actually is.  A
+    // READ fault.
+    JunitWrongRoot(found: Str)
+    // An element the schema requires an attribute on has not got it:
+    // `name` on a `testsuite` or a `testcase`.  A READ fault.
+    JunitMissingAttr(element: Str, attr: Str)
+    // A `time` attribute is not a decimal number of seconds.  `on` is
+    // the element it was read from and `text` is what was written
+    // there.  A READ fault.
+    JunitBadTime(on: Str, text: Str)
+    // A `testcase` carries more than one of `failure`, `error` and
+    // `skipped`.  The de-facto schema gives a case one outcome, and a
+    // reader that took the first would report a failure as a skip
+    // depending on the order a writer chose.  A READ fault.
+    JunitTwoOutcomes(case_name: Str)
+    // Text handed to the writer holds a character XML 1.0 section 2.2
+    // does not admit.  `at` is the byte offset within that text and
+    // `byte_value` is the character, so a message can name it.  A
+    // WRITE fault: the program producing the report has to decide
+    // whether to drop the byte.
+    JunitUnwritable(element: Str, at: Int, byte_value: Int)
+    // A duration would not fit the number of decimal places the writer
+    // was asked for.  `decimals` is what was asked and `time_us` is
+    // the value.  A WRITE fault, and the reason `junitwrite` has an
+    // option for it rather than a constant.
+    JunitTimeTooPrecise(time_us: Int, decimals: Int)
+
+// `JunitFault` is an `Error`, which is what lets
+// `Result<T, JunitFault>` exist at all (SPEC section 3.4).
+impl Error for JunitFault
+    // The one-line message, naming what was found and where.
+    //
+    // Panics with `not implemented` until the bodies land.
+    fn message(self) -> Str
+        todo("junit-nv.JunitFault.message")
+
+// Whether this fault is in the report being WRITTEN rather than in a
+// report being read.
+//
+// True for `JunitUnwritable` and `JunitTimeTooPrecise`, which are
+// faults in the program producing the report.  False for everything
+// else, which is a fault in a file somebody else produced.  A tool
+// merging twenty reports logs the second kind and carries on, and
+// fails on the first.
+//
+// ```novo
+// use juniterror
+//
+// fn main() [io]
+//     let mine = JunitUnwritable("system-out", 4, 0)
+//     let theirs = JunitWrongRoot("html")
+//     println("${juniterror.is_writer_fault(mine)}")
+//     println("${juniterror.is_writer_fault(theirs)}")
+// ```
+pub fn is_writer_fault(f: JunitFault) -> Bool []
+    todo("junit-nv.juniterror.is_writer_fault")
+
+// A short stable code for a log or a metric label: `"not_xml"`,
+// `"wrong_root"`, `"unwritable"`, and so on.
+//
+// Stable across releases and free of anything the document carried, so
+// it is safe as a metric label — putting `message()` in one would put
+// a file's own element names into a time series database.
+//
+// ```novo
+// use juniterror
+//
+// fn main() [io]
+//     println(juniterror.code(JunitWrongRoot("html")))
+// ```
+pub fn code(f: JunitFault) -> Str []
+    todo("junit-nv.juniterror.code")
+
+// The byte offset the fault is about, or `-1` when it is not about a
+// position.
+//
+// `JunitNotXml` and `JunitUnwritable` both carry one.  A caller
+// pointing at a character in a file needs it, and a caller printing a
+// line does not, which is why it is read back rather than matched out.
+//
+// ```novo
+// use juniterror
+//
+// fn main() [io]
+//     let bad = JunitNotXml(120, "unclosed element")
+//     println("${juniterror.offset(bad)}")
+// ```
+pub fn offset(f: JunitFault) -> Int []
+    todo("junit-nv.juniterror.offset")

@@ -1,0 +1,150 @@
+// junitwrite_tests.nv — what the writer refuses, and what it computes.
+//
+// RED ON PURPOSE: every assertion reaches `not implemented:
+// junit-nv.junitwrite.<fn>`.  What is asserted is that a character XML
+// cannot carry is refused rather than emitted, that losing one is a
+// separate call, and that a duration is rendered to the places the
+// caller asked for.
+
+use std.test
+use junitsuite
+use junitwrite
+use juniterror
+
+@test
+fn test_the_defaults_are_what_a_ci_reader_expects() [io]
+    let o = junitwrite.options()
+
+    test.case("a declaration, because several readers refuse a document without one")
+    test.assert(o.declaration)
+
+    test.case("three decimal places, which is what most writers emit")
+    test.assert(o.time_decimals == 3)
+
+    test.case("an indent, because a human opens this file")
+    test.assert(o.indent == 2)
+
+    test.case("a testsuites root, and the output elements written")
+    test.assert(not o.bare_root)
+    test.assert(o.output_elements)
+
+@test
+fn test_each_option_changes_one_thing() [io]
+    let o = junitwrite.options()
+
+    test.case("compact is the smallest document that says the same thing")
+    let small = junitwrite.compact()
+    test.assert(small.indent == 0)
+    test.assert(not small.declaration)
+    test.assert(not small.output_elements)
+
+    test.case("bare_suite writes a one-suite report as a bare testsuite root")
+    test.assert(junitwrite.bare_suite(o).bare_root)
+    test.assert(not o.bare_root)
+
+    test.case("with_time_decimals, for a writer that measures finer")
+    test.assert(junitwrite.with_time_decimals(o, 6).time_decimals == 6)
+
+    test.case("without_output, for a report going somewhere with a size limit")
+    test.assert(not junitwrite.without_output(o).output_elements)
+    test.assert(junitwrite.without_output(o).declaration == o.declaration)
+
+@test
+fn test_a_character_xml_cannot_carry_is_refused_rather_than_emitted() [io]
+    // XML 1.0 section 2.2 admits tab, newline, carriage return and
+    // U+0020 upwards.  There is no escape for anything else: `&#1;` is
+    // as ill-formed as the byte.  A writer that emits one produces a
+    // file the CI rejects hours later, attributed to the wrong test.
+    let noisy = junitsuite.with_system_out(junitsuite.case("t", "s"), "progress\u{1}bar")
+    let r = junitsuite.report([junitsuite.with_cases(junitsuite.suite("s"), [noisy])])
+
+    test.case("the writer names the element and the offset")
+    match junitwrite.write_report([], r, junitwrite.options())
+        Ok(_)      => test.fail("a control character cannot be written")
+        Err(fault) =>
+            match fault
+                JunitUnwritable(element, at, byte_value) =>
+                    test.assert(element == "system-out")
+                    test.assert(at == 8)
+                    test.assert(byte_value == 1)
+                _                                        => test.fail("the fault names the unwritable character")
+
+    test.case("and it is the writer's fault, not the report's author's")
+    test.assert(juniterror.is_writer_fault(JunitUnwritable("system-out", 8, 1)))
+
+    test.case("first_unwritable answers the same offset on its own")
+    test.assert(junitwrite.first_unwritable("progress\u{1}bar") == 8)
+    test.assert(junitwrite.first_unwritable("hello") == 0 - 1)
+
+    test.case("tab, newline and carriage return are admitted")
+    test.assert(junitwrite.first_unwritable("a\tb\nc\rd") == 0 - 1)
+
+@test
+fn test_losing_a_byte_is_a_separate_call() [io]
+    // Sanitising is not an option on the writer, so a caller that
+    // drops what a test printed has written that down in its own
+    // source.
+    test.case("the characters XML admits are kept")
+    test.assert(junitwrite.sanitize_text("a\tb\nc") == "a\tb\nc")
+
+    test.case("and the ones it does not are dropped, not substituted")
+    test.assert(junitwrite.sanitize_text("progress\u{1}bar") == "progressbar")
+
+    test.case("after which the same report writes")
+    let clean = junitsuite.with_system_out(junitsuite.case("t", "s"),
+                                           junitwrite.sanitize_text("progress\u{1}bar"))
+    let r = junitsuite.report([junitsuite.with_cases(junitsuite.suite("s"), [clean])])
+    match junitwrite.write_report([], r, junitwrite.options())
+        Ok(bytes) => test.assert(list.len(bytes) > 0)
+        Err(_)    => test.fail("nothing unwritable is left in this report")
+
+@test
+fn test_a_duration_is_rendered_to_the_places_that_were_asked_for() [io]
+    test.case("seconds, with three places")
+    match junitwrite.format_time(125000, 3)
+        Some(text) => test.assert(text == "0.125")
+        None       => test.fail("125 milliseconds fits three decimal places")
+
+    test.case("a whole second still writes its places")
+    match junitwrite.format_time(1000000, 3)
+        Some(text) => test.assert(text == "1.000")
+        None       => test.fail("one second fits three decimal places")
+
+    test.case("and a value that would lose a digit says so rather than rounding")
+    match junitwrite.format_time(1500, 3)
+        Some(_) => test.fail("1500 microseconds does not fit three decimal places")
+        None    => test.assert(true)
+
+    test.case("which the writer turns into a fault the caller can answer")
+    test.assert(juniterror.is_writer_fault(JunitTimeTooPrecise(1500, 3)))
+
+    test.case("six places holds every microsecond")
+    match junitwrite.format_time(1500, 6)
+        Some(text) => test.assert(text == "0.001500")
+        None       => test.fail("six decimal places hold a microsecond")
+
+@test
+fn test_a_suite_can_be_written_one_at_a_time() [io]
+    // A run of ten thousand cases is a document of several megabytes,
+    // and a caller streaming it has not got the counts until the end.
+    let totals = junitsuite.totals_of(junitsuite.report([]))
+
+    test.case("the open tag takes the counts the caller has")
+    match junitwrite.write_open([], "novo test", totals, junitwrite.options())
+        Ok(bytes)  => test.assert(list.len(bytes) > 0)
+        Err(fault) => test.fail(fault.message())
+
+    test.case("a suite writes on its own")
+    match junitwrite.write_suite([], junitsuite.suite("xml_tests"), junitwrite.options())
+        Ok(bytes)  => test.assert(list.len(bytes) > 0)
+        Err(fault) => test.fail(fault.message())
+
+    test.case("and the close tag needs nothing and cannot fail")
+    test.assert(list.len(junitwrite.write_close([], junitwrite.options())) > 0)
+
+@test
+fn test_the_whole_document_as_a_string_is_the_convenience_form() [io]
+    test.case("to_str answers the same document write_report appends")
+    match junitwrite.to_str(junitsuite.report([junitsuite.suite("s")]), junitwrite.options())
+        Ok(text)   => test.assert(str.len(text) > 0)
+        Err(fault) => test.fail(fault.message())

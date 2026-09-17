@@ -1,0 +1,189 @@
+// junitread.nv — a document somebody else wrote, read into the values
+// `junitsuite` declares.
+//
+// THE PARSER IS NOT HERE
+//
+// Reading starts from an `xmltree.XmlDocument`, and `read` is the one
+// function that builds one.  A caller that already parsed the document
+// — because it is also reading an attribute this package does not
+// model, or because it parsed once and is reading twice — hands the
+// tree to `read_document` and parses nothing again.
+//
+// WHAT IS TOLERATED AND WHAT IS NOT
+//
+// The de-facto schema has no normative document, so a reader that
+// refused everything unusual would refuse most real files.  This one
+// tolerates: a `testsuite` root with no `testsuites` around it, a
+// `testsuites` element with no attributes, unknown attributes on any
+// element, unknown child elements, `properties` on a case as well as
+// on a suite, and counts that disagree with the cases — which are
+// ignored, because `junitsuite` computes them.
+//
+// It refuses: a root element that is neither of the two, a `testcase`
+// with no `name`, a `time` attribute that is not a decimal number, and
+// a `testcase` carrying two outcome elements.  Each of those is a fact
+// a caller would otherwise silently get wrong.
+
+use junitsuite
+use juniterror
+use xmltree
+
+// The report a document holds.
+//
+// Parses the text and reads the tree.  A document whose root is a bare
+// `testsuite` answers a report with that one suite, so a caller never
+// has two shapes to handle.
+//
+// ```novo
+// use junitread
+//
+// fn main() [io]
+//     let text = "<testsuite name=\"s\"></testsuite>"
+//     match junitread.read(text)
+//         Ok(report) => println("${list.len(report.suites)} suite(s)")
+//         Err(fault) => println(fault.message())
+// ```
+pub fn read(source: Str) -> Result<junitsuite.JunitReport, juniterror.JunitFault> []
+    todo("junit-nv.junitread.read")
+
+// The report an already-parsed document holds.
+//
+// The parse is the expensive half, and a caller that has one should
+// not pay for it twice.
+//
+// ```novo
+// use junitread
+// use xmltree
+//
+// fn main() [io]
+//     let doc = xmltree.build("<testsuite name=\"s\"></testsuite>")
+//     match junitread.read_document(doc)
+//         Ok(report) => println("${list.len(report.suites)} suite(s)")
+//         Err(fault) => println(fault.message())
+// ```
+pub fn read_document(doc: xmltree.XmlDocument) -> Result<junitsuite.JunitReport, juniterror.JunitFault> []
+    todo("junit-nv.junitread.read_document")
+
+// One `testsuite` element, by its node index in the document.
+//
+// For a caller walking a large document itself — a merge tool reading
+// twenty files and keeping one suite from each.
+//
+// ```novo
+// use junitread
+// use xmltree
+//
+// fn main() [io]
+//     let doc = xmltree.build("<testsuite name=\"s\"></testsuite>")
+//     match junitread.read_suite(doc, xmltree.root(doc))
+//         Ok(suite)  => println(suite.name)
+//         Err(fault) => println(fault.message())
+// ```
+pub fn read_suite(doc: xmltree.XmlDocument,
+                  index: Int) -> Result<junitsuite.JunitSuite, juniterror.JunitFault> []
+    todo("junit-nv.junitread.read_suite")
+
+// One `testcase` element, by its node index in the document.
+//
+// ```novo
+// use junitread
+// use xmltree
+//
+// fn main() [io]
+//     let doc = xmltree.build("<testcase name=\"t\"/>")
+//     match junitread.read_case(doc, xmltree.root(doc))
+//         Ok(case)   => println(case.name)
+//         Err(fault) => println(fault.message())
+// ```
+pub fn read_case(doc: xmltree.XmlDocument,
+                 index: Int) -> Result<junitsuite.JunitCase, juniterror.JunitFault> []
+    todo("junit-nv.junitread.read_case")
+
+// The name of the document's root element when it is one this package
+// reads: `"testsuites"`, `"testsuite"`, or `""` for anything else.
+//
+// The cheap question a tool sorting a directory of XML files asks
+// before it reads any of them.
+//
+// ```novo
+// use junitread
+// use xmltree
+//
+// fn main() [io]
+//     let doc = xmltree.build("<testsuite name=\"s\"></testsuite>")
+//     println(junitread.root_kind(doc))
+// ```
+pub fn root_kind(doc: xmltree.XmlDocument) -> Str []
+    todo("junit-nv.junitread.root_kind")
+
+// Whether a document is a JUnit report at all.
+//
+// True exactly when `root_kind` is not empty.  It is here because the
+// question reads better than the comparison at a call site that only
+// wants the answer.
+//
+// ```novo
+// use junitread
+// use xmltree
+//
+// fn main() [io]
+//     let doc = xmltree.build("<html></html>")
+//     println("${junitread.is_junit(doc)}")
+// ```
+pub fn is_junit(doc: xmltree.XmlDocument) -> Bool []
+    todo("junit-nv.junitread.is_junit")
+
+// A `time` attribute as an integer count of microseconds, or `None`
+// when it is not a decimal number of seconds.
+//
+// Digits beyond a microsecond are truncated rather than rounded, so a
+// document read and written again holds the same number.  An empty
+// string, a `+`, an exponent and the word `NaN` are all `None`: they
+// appear in real reports and every one of them means the writer did
+// not measure anything.
+//
+// ```novo
+// use junitread
+//
+// fn main() [io]
+//     match junitread.parse_time("0.125")
+//         Some(us) => println("${us}")
+//         None     => println("not a duration")
+// ```
+pub fn parse_time(text: Str) -> ?Int []
+    todo("junit-nv.junitread.parse_time")
+
+// Every `testcase` node index under a suite node, in document order.
+//
+// The walk `read_suite` does, offered on its own for a caller that
+// wants the nodes rather than the values — a tool rewriting one
+// attribute in place reads the tree and never builds a `JunitCase`.
+//
+// ```novo
+// use junitread
+// use xmltree
+//
+// fn main() [io]
+//     let doc = xmltree.build("<testsuite><testcase name=\"t\"/></testsuite>")
+//     println("${list.len(junitread.case_nodes(doc, xmltree.root(doc)))}")
+// ```
+pub fn case_nodes(doc: xmltree.XmlDocument, suite_index: Int) -> [Int] []
+    todo("junit-nv.junitread.case_nodes")
+
+// Every `testsuite` node index in a document, in document order,
+// including a bare `testsuite` root and suites nested inside another
+// suite.
+//
+// Nesting is not in the schema and Maven's reports do it, so a reader
+// that only looked one level down would lose them.
+//
+// ```novo
+// use junitread
+// use xmltree
+//
+// fn main() [io]
+//     let doc = xmltree.build("<testsuites><testsuite name=\"s\"/></testsuites>")
+//     println("${list.len(junitread.suite_nodes(doc))}")
+// ```
+pub fn suite_nodes(doc: xmltree.XmlDocument) -> [Int] []
+    todo("junit-nv.junitread.suite_nodes")

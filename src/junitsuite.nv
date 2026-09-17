@@ -1,0 +1,583 @@
+// junitsuite.nv — the report as a value: what a JUnit XML document
+// says, with nothing left as text that has a type.
+//
+// ONE OUTCOME PER CASE
+//
+// The de-facto schema lets a `testcase` element hold a `failure`, an
+// `error` or a `skipped` child, and several writers emit more than one
+// of them.  `JunitCase` holds exactly one `JunitOutcome`, so a case is
+// passed, failed, errored or skipped and never two of those at once.
+// A reader meeting a case with two outcome elements answers
+// `JunitTwoOutcomes` rather than picking, because picking would report
+// a failure as a skip whenever a writer happened to emit the skip
+// first.
+//
+// A DURATION IS AN INTEGER COUNT OF MICROSECONDS
+//
+// The `time` attribute is a decimal number of seconds, which is a
+// float in the file, and a float does not round-trip: a report read
+// and written again would change its own numbers.  So a duration is
+// carried as an integer count of microseconds and rendered to the
+// decimal places the writer is asked for.  Microseconds is the
+// resolution every writer in the field emits — three decimal places is
+// the common one and six is the finest anybody writes.
+//
+// A TIMESTAMP IS THE TEXT IT WILL CARRY
+//
+// The `timestamp` attribute is an ISO 8601 local time with no time
+// zone, and this package declares no effects, so it can neither read a
+// clock nor decide what local means.  The field is the text: a caller
+// that has a date formats it, and a reader hands back what was
+// written.  `is_timestamp_shaped` is the only judgement made about it.
+//
+// THE COUNTS ARE DERIVED, NOT STORED
+//
+// `tests`, `failures`, `errors` and `skipped` are attributes in the
+// file and are NOT fields here.  A stored count is a count that can
+// disagree with the cases beside it, and every tool that trusts one
+// eventually reports a number no list of cases explains.  `totals_of`
+// computes them from the cases, so the file this package writes is
+// consistent with itself by construction.
+
+// One `property` element: a name and a value a run recorded.
+//
+// The de-facto schema puts these on a suite, and several writers put
+// them on a case as well.  Both are here.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let p = junitsuite.property("os", "linux")
+//     println(p.name + "=" + p.value)
+// ```
+pub struct JunitProperty
+    // The property's name, as the `name` attribute.
+    name: Str
+    // The property's value, as the `value` attribute.
+    value: Str
+
+// What happened to one test.
+//
+// Four arms, which is the whole schema: a case with no outcome element
+// passed, and the other three are the three elements.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     println(junitsuite.outcome_tag(JunitPassed))
+// ```
+pub enum JunitOutcome
+    // No outcome element: the test ran and passed.
+    JunitPassed
+    // A `failure` element: an assertion the test made did not hold.
+    // `message` is the element's `message` attribute, `kind` is its
+    // `type` attribute — the assertion class a framework names — and
+    // `text` is the element's character data, which is where a stack
+    // trace goes.
+    JunitFailure(message: Str, kind: Str, text: Str)
+    // An `error` element: the test did not finish.  The distinction
+    // from a failure is the one thing this schema gets right and most
+    // reports get wrong — a failed assertion is a result and a crash
+    // is not, and a dashboard that merges them cannot tell a broken
+    // test from a broken build.
+    JunitErrored(message: Str, kind: Str, text: Str)
+    // A `skipped` element: the test did not run.  `message` is why,
+    // and it is usually empty.
+    JunitSkipped(message: Str)
+
+// One `testcase` element.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let c = junitsuite.case("parses an empty document", "xml_tests")
+//     println(c.name)
+// ```
+pub struct JunitCase
+    // The `name` attribute: what the test is called.  Required by
+    // every reader in the field.
+    name: Str
+    // The `classname` attribute: the suite, class or file the test
+    // belongs to.  A grouping key rather than a class name, whatever
+    // the attribute is called.
+    classname: Str
+    // How long the test took, in microseconds.  Written as the `time`
+    // attribute in seconds.
+    time_us: Int
+    // What happened.
+    outcome: JunitOutcome
+    // The case's `system-out` element: what the test printed on
+    // standard output.  Empty when there is none.
+    system_out: Str
+    // The case's `system-err` element.  Empty when there is none.
+    system_err: Str
+    // The `file` attribute: the source file the test is in, or empty.
+    // Not in the original schema and emitted by pytest, and a reader
+    // that wants to open the test needs it.
+    file: Str
+    // The `line` attribute: the line the test starts on, or `0`.
+    line: Int
+    // `property` elements on this case.  Empty for most writers.
+    properties: [JunitProperty]
+
+// One `testsuite` element.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let s = junitsuite.suite("xml_tests")
+//     println(s.name)
+// ```
+pub struct JunitSuite
+    // The `name` attribute: what the suite is called.
+    name: Str
+    // The `package` attribute: the module or directory the suite came
+    // from, or empty.
+    package: Str
+    // The `timestamp` attribute, verbatim: an ISO 8601 local time with
+    // no time zone, or empty.  See the note at the top of this module
+    // on why it is text.
+    timestamp: Str
+    // The `hostname` attribute: the machine the suite ran on, or
+    // empty.
+    hostname: Str
+    // The `id` attribute: the suite's index within the document, or
+    // `-1` when the file did not say.
+    id: Int
+    // How long the whole suite took, in microseconds.  Written as the
+    // `time` attribute in seconds.  Not the sum of the cases: the
+    // difference is setup and teardown, which is exactly what a reader
+    // chasing a slow suite is looking for.
+    time_us: Int
+    // The cases, in the order the file gives them.
+    cases: [JunitCase]
+    // `property` elements on the suite: the environment a run
+    // recorded.
+    properties: [JunitProperty]
+    // The suite's `system-out` element, or empty.
+    system_out: Str
+    // The suite's `system-err` element, or empty.
+    system_err: Str
+
+// A whole document: a `testsuites` element and the suites under it.
+//
+// A document whose root is a bare `testsuite` reads as a report with
+// one suite, so a caller never has two shapes to handle.
+// `junitwrite.bare_suite` writes that form back.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let r = junitsuite.report([junitsuite.suite("xml_tests")])
+//     println("${list.len(r.suites)}")
+// ```
+pub struct JunitReport
+    // The `name` attribute on `testsuites`, or empty.
+    name: Str
+    // The suites, in document order.
+    suites: [JunitSuite]
+    // The `time` attribute on `testsuites`, in microseconds: how long
+    // the whole run took.
+    time_us: Int
+
+// The counts a reader wants, computed rather than stored.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let t = junitsuite.totals_of(junitsuite.report([]))
+//     println("${t.tests}")
+// ```
+pub struct JunitTotals
+    // How many cases there are.
+    tests: Int
+    // How many carry a `failure`.
+    failures: Int
+    // How many carry an `error`.
+    errors: Int
+    // How many carry a `skipped`.
+    skipped: Int
+    // How many passed: `tests` less the other three.
+    passed: Int
+    // The sum of the cases' durations, in microseconds.  A suite's own
+    // `time_us` is not this number, and the gap is its setup.
+    time_us: Int
+
+// A property from a name and a value.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     println(junitsuite.property("branch", "main").value)
+// ```
+pub fn property(name: Str, value: Str) -> JunitProperty []
+    todo("junit-nv.junitsuite.property")
+
+// The value of the first property with this name, or `None`.
+//
+// First rather than only: the schema does not say a name appears once,
+// and reports in the field repeat one.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let ps = [junitsuite.property("os", "linux")]
+//     match junitsuite.property_value(ps, "os")
+//         Some(v) => println(v)
+//         None    => println("not recorded")
+// ```
+pub fn property_value(properties: [JunitProperty], name: Str) -> ?Str []
+    todo("junit-nv.junitsuite.property_value")
+
+// A passing case with a name and a class name, no duration and no
+// output.
+//
+// The starting value every other builder narrows.  A case is passed
+// until something says otherwise, which is the schema's own rule: a
+// `testcase` with no child element is a test that passed.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let c = junitsuite.case("parses an empty document", "xml_tests")
+//     println("${junitsuite.is_passed(c.outcome)}")
+// ```
+pub fn case(name: Str, classname: Str) -> JunitCase []
+    todo("junit-nv.junitsuite.case")
+
+// The same case with a duration, in microseconds.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let c = junitsuite.with_time(junitsuite.case("t", "s"), 1500)
+//     println("${c.time_us}")
+// ```
+pub fn with_time(c: JunitCase, time_us: Int) -> JunitCase []
+    todo("junit-nv.junitsuite.with_time")
+
+// The same case with an outcome.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let failed = JunitFailure("expected 2, got 3", "assert_eq", "")
+//     let c = junitsuite.with_outcome(junitsuite.case("t", "s"), failed)
+//     println(junitsuite.outcome_tag(c.outcome))
+// ```
+pub fn with_outcome(c: JunitCase, outcome: JunitOutcome) -> JunitCase []
+    todo("junit-nv.junitsuite.with_outcome")
+
+// The same case with what the test printed on standard output.
+//
+// The text is carried as it was printed and is checked only when it is
+// written: `junitwrite` refuses a character XML 1.0 cannot hold rather
+// than emitting a document nothing reads back.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let c = junitsuite.with_system_out(junitsuite.case("t", "s"), "hello")
+//     println(c.system_out)
+// ```
+pub fn with_system_out(c: JunitCase, text: Str) -> JunitCase []
+    todo("junit-nv.junitsuite.with_system_out")
+
+// The same case with what the test printed on standard error.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let c = junitsuite.with_system_err(junitsuite.case("t", "s"), "warning")
+//     println(c.system_err)
+// ```
+pub fn with_system_err(c: JunitCase, text: Str) -> JunitCase []
+    todo("junit-nv.junitsuite.with_system_err")
+
+// The same case with the source file and line it is written at.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let c = junitsuite.at_source(junitsuite.case("t", "s"), "tests/x.nv", 42)
+//     println("${c.line}")
+// ```
+pub fn at_source(c: JunitCase, file: Str, line: Int) -> JunitCase []
+    todo("junit-nv.junitsuite.at_source")
+
+// The same case with property elements of its own.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let ps = [junitsuite.property("retries", "2")]
+//     let c = junitsuite.with_case_properties(junitsuite.case("t", "s"), ps)
+//     println("${list.len(c.properties)}")
+// ```
+pub fn with_case_properties(c: JunitCase, properties: [JunitProperty]) -> JunitCase []
+    todo("junit-nv.junitsuite.with_case_properties")
+
+// An empty suite with a name: no cases, no properties, no timestamp.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     println(junitsuite.suite("xml_tests").name)
+// ```
+pub fn suite(name: Str) -> JunitSuite []
+    todo("junit-nv.junitsuite.suite")
+
+// The same suite with its cases.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let s = junitsuite.with_cases(junitsuite.suite("s"),
+//                                   [junitsuite.case("t", "s")])
+//     println("${list.len(s.cases)}")
+// ```
+pub fn with_cases(s: JunitSuite, cases: [JunitCase]) -> JunitSuite []
+    todo("junit-nv.junitsuite.with_cases")
+
+// The same suite with property elements: the environment a run
+// recorded.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let ps = [junitsuite.property("os", "linux")]
+//     let s = junitsuite.with_properties(junitsuite.suite("s"), ps)
+//     println("${list.len(s.properties)}")
+// ```
+pub fn with_properties(s: JunitSuite, properties: [JunitProperty]) -> JunitSuite []
+    todo("junit-nv.junitsuite.with_properties")
+
+// The same suite with a duration for the whole suite, in microseconds.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     println("${junitsuite.with_suite_time(junitsuite.suite("s"), 90000).time_us}")
+// ```
+pub fn with_suite_time(s: JunitSuite, time_us: Int) -> JunitSuite []
+    todo("junit-nv.junitsuite.with_suite_time")
+
+// The same suite with a `timestamp` attribute.
+//
+// The text is written as it is given.  `is_timestamp_shaped` is
+// available for a caller that wants to check it first.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let s = junitsuite.with_timestamp(junitsuite.suite("s"),
+//                                       "2026-09-17T09:41:00")
+//     println(s.timestamp)
+// ```
+pub fn with_timestamp(s: JunitSuite, iso8601_local: Str) -> JunitSuite []
+    todo("junit-nv.junitsuite.with_timestamp")
+
+// The same suite with a `hostname` and a `package`.
+//
+// The two together because they are one fact — where the suite ran and
+// what it came from — and a builder per attribute would be a builder
+// nobody calls.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let s = junitsuite.with_origin(junitsuite.suite("s"), "ci-7", "orbit.xml")
+//     println(s.hostname + " " + s.package)
+// ```
+pub fn with_origin(s: JunitSuite, hostname: Str, package: Str) -> JunitSuite []
+    todo("junit-nv.junitsuite.with_origin")
+
+// The same suite with the output the suite itself produced, outside
+// any case.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let s = junitsuite.with_suite_output(junitsuite.suite("s"), "setup ok", "")
+//     println(s.system_out)
+// ```
+pub fn with_suite_output(s: JunitSuite, system_out: Str, system_err: Str) -> JunitSuite []
+    todo("junit-nv.junitsuite.with_suite_output")
+
+// A report from a list of suites.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     println("${list.len(junitsuite.report([]).suites)}")
+// ```
+pub fn report(suites: [JunitSuite]) -> JunitReport []
+    todo("junit-nv.junitsuite.report")
+
+// The same report with a name and a duration for the whole run.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let r = junitsuite.with_run(junitsuite.report([]), "novo test", 120000)
+//     println(r.name)
+// ```
+pub fn with_run(r: JunitReport, name: Str, time_us: Int) -> JunitReport []
+    todo("junit-nv.junitsuite.with_run")
+
+// The counts over one suite, computed from its cases.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     println("${junitsuite.suite_totals(junitsuite.suite("s")).tests}")
+// ```
+pub fn suite_totals(s: JunitSuite) -> JunitTotals []
+    todo("junit-nv.junitsuite.suite_totals")
+
+// The counts over a whole report, computed from every case in it.
+//
+// This is what the `tests`, `failures`, `errors` and `skipped`
+// attributes are written from, so the document a caller writes agrees
+// with the cases it contains.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     println("${junitsuite.totals_of(junitsuite.report([])).failures}")
+// ```
+pub fn totals_of(r: JunitReport) -> JunitTotals []
+    todo("junit-nv.junitsuite.totals_of")
+
+// Whether a run counts as green: no failures and no errors.
+//
+// A skip is not a failure, which is the schema's reading and the one
+// every CI applies.  A run of nothing but skips is green, and a caller
+// that disagrees has `totals_of` to say so itself.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     println("${junitsuite.is_green(junitsuite.report([]))}")
+// ```
+pub fn is_green(r: JunitReport) -> Bool []
+    todo("junit-nv.junitsuite.is_green")
+
+// Whether an outcome is a pass.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     println("${junitsuite.is_passed(JunitPassed)}")
+// ```
+pub fn is_passed(o: JunitOutcome) -> Bool []
+    todo("junit-nv.junitsuite.is_passed")
+
+// Whether an outcome is a failed assertion — a `failure` element, not
+// an `error` one.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let o = JunitFailure("expected 2, got 3", "assert_eq", "")
+//     println("${junitsuite.is_failure(o)}")
+// ```
+pub fn is_failure(o: JunitOutcome) -> Bool []
+    todo("junit-nv.junitsuite.is_failure")
+
+// Whether an outcome is a test that did not finish — an `error`
+// element.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let o = JunitErrored("segmentation fault", "signal", "")
+//     println("${junitsuite.is_errored(o)}")
+// ```
+pub fn is_errored(o: JunitOutcome) -> Bool []
+    todo("junit-nv.junitsuite.is_errored")
+
+// Whether an outcome is a test that did not run.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     println("${junitsuite.is_skipped(JunitSkipped(""))}")
+// ```
+pub fn is_skipped(o: JunitOutcome) -> Bool []
+    todo("junit-nv.junitsuite.is_skipped")
+
+// The element name an outcome is written as: `"failure"`, `"error"`,
+// `"skipped"`, or `""` for a pass.
+//
+// The writer uses it and so does a caller printing a summary line.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     println(junitsuite.outcome_tag(JunitSkipped("")))
+// ```
+pub fn outcome_tag(o: JunitOutcome) -> Str []
+    todo("junit-nv.junitsuite.outcome_tag")
+
+// The `message` attribute an outcome carries, or `""`.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     let o = JunitFailure("expected 2, got 3", "assert_eq", "")
+//     println(junitsuite.outcome_message(o))
+// ```
+pub fn outcome_message(o: JunitOutcome) -> Str []
+    todo("junit-nv.junitsuite.outcome_message")
+
+// Whether a timestamp has the shape the `timestamp` attribute wants:
+// `YYYY-MM-DDThh:mm:ss`, with no time zone.
+//
+// A shape check and nothing more.  This package reads no clock and
+// holds no calendar, so it does not know whether the date exists; it
+// knows whether a reader will parse it.  `2026-02-30T00:00:00` is
+// shaped and is not a day.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     println("${junitsuite.is_timestamp_shaped("2026-09-17T09:41:00")}")
+//     println("${junitsuite.is_timestamp_shaped("Wed Sep 17 09:41:00 2026")}")
+// ```
+pub fn is_timestamp_shaped(text: Str) -> Bool []
+    todo("junit-nv.junitsuite.is_timestamp_shaped")

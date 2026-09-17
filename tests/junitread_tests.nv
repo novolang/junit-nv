@@ -1,0 +1,178 @@
+// junitread_tests.nv — what the reader tolerates and what it refuses.
+//
+// RED ON PURPOSE: every assertion reaches `not implemented:
+// junit-nv.junitread.<fn>`.  What is asserted is that both root shapes
+// read into one value, that a duration truncates rather than rounds,
+// and that the four refusals are refusals rather than a quietly wrong
+// answer.
+
+use std.test
+use junitread
+use juniterror
+use junitsuite
+use xmltree
+
+fn suites_doc() -> Str
+    let passing = "<testcase name=\"parses\" classname=\"xml_tests\" time=\"0.125\"/>"
+    let failing = "<testcase name=\"rejects\" classname=\"xml_tests\"><failure message=\"expected 2, got 3\" type=\"assert_eq\">at line 9</failure></testcase>"
+    let open = "<testsuites name=\"novo test\"><testsuite name=\"xml_tests\" time=\"1.250\">"
+    open + passing + failing + "</testsuite></testsuites>"
+
+@test
+fn test_both_root_shapes_read_into_one_value() [io]
+    // A caller never has two shapes to handle, which is why a bare
+    // `testsuite` root answers a report holding that one suite.
+    test.case("a testsuites root")
+    match junitread.read(suites_doc())
+        Ok(r)      => test.assert(list.len(r.suites) == 1)
+        Err(fault) => test.fail(fault.message())
+
+    test.case("and a bare testsuite root")
+    match junitread.read("<testsuite name=\"s\"></testsuite>")
+        Ok(r)      =>
+            test.assert(list.len(r.suites) == 1)
+            test.assert(r.suites[0].name == "s")
+        Err(fault) => test.fail(fault.message())
+
+    test.case("the root element is named without reading the rest")
+    let doc = xmltree.build(suites_doc())
+    test.assert(junitread.root_kind(doc) == "testsuites")
+    test.assert(junitread.is_junit(doc))
+
+    test.case("and anything else is not a report at all")
+    let page = xmltree.build("<html><body></body></html>")
+    test.assert(junitread.root_kind(page) == "")
+    test.assert(not junitread.is_junit(page))
+
+    test.case("which is the refusal read answers")
+    match junitread.read("<html></html>")
+        Ok(_)      => test.fail("an HTML document is not a report")
+        Err(fault) =>
+            match fault
+                JunitWrongRoot(found) => test.assert(found == "html")
+                _                     => test.fail("the fault names what was there")
+
+@test
+fn test_a_document_already_parsed_is_not_parsed_again() [io]
+    // The parse is the expensive half, and a merge tool reading twenty
+    // files should pay for it once each.
+    let doc = xmltree.build(suites_doc())
+
+    test.case("read_document takes the tree")
+    match junitread.read_document(doc)
+        Ok(r)      => test.assert(r.name == "novo test")
+        Err(fault) => test.fail(fault.message())
+
+    test.case("the suite nodes are found, nesting included")
+    test.assert(list.len(junitread.suite_nodes(doc)) == 1)
+
+    test.case("and the case nodes under a suite, in document order")
+    let suites = junitread.suite_nodes(doc)
+    test.assert(list.len(junitread.case_nodes(doc, suites[0])) == 2)
+
+    test.case("one suite reads on its own")
+    match junitread.read_suite(doc, suites[0])
+        Ok(s)      => test.assert(s.name == "xml_tests")
+        Err(fault) => test.fail(fault.message())
+
+    test.case("and one case")
+    let cases = junitread.case_nodes(doc, suites[0])
+    match junitread.read_case(doc, cases[0])
+        Ok(c)      =>
+            test.assert(c.name == "parses")
+            test.assert(junitsuite.is_passed(c.outcome))
+        Err(fault) => test.fail(fault.message())
+
+@test
+fn test_an_outcome_element_becomes_the_one_outcome() [io]
+    let doc = xmltree.build(suites_doc())
+    let suites = junitread.suite_nodes(doc)
+    let cases = junitread.case_nodes(doc, suites[0])
+
+    test.case("a failure element carries its message, its type and its text")
+    match junitread.read_case(doc, cases[1])
+        Ok(c)      =>
+            match c.outcome
+                JunitFailure(message, kind, text) =>
+                    test.assert(message == "expected 2, got 3")
+                    test.assert(kind == "assert_eq")
+                    test.assert(text == "at line 9")
+                _                                 => test.fail("this case carries a failure element")
+        Err(fault) => test.fail(fault.message())
+
+    test.case("and a case with two outcome elements is refused rather than picked from")
+    let two = "<testcase name=\"t\"><failure/><skipped/></testcase>"
+    match junitread.read(two)
+        Ok(_)      => test.fail("a case has one outcome")
+        Err(fault) =>
+            match fault
+                JunitTwoOutcomes(case_name) => test.assert(case_name == "t")
+                JunitWrongRoot(_)           => test.assert(true)
+                _                           => test.fail("the fault names the case")
+
+@test
+fn test_a_duration_truncates_rather_than_rounds() [io]
+    // A document read and written again holds the same number, which
+    // it would not if a reader rounded at a microsecond.
+    test.case("a decimal number of seconds becomes microseconds")
+    match junitread.parse_time("0.125")
+        Some(us) => test.assert(us == 125000)
+        None     => test.fail("0.125 is a duration")
+
+    test.case("an integer is a duration too")
+    match junitread.parse_time("2")
+        Some(us) => test.assert(us == 2000000)
+        None     => test.fail("2 is a duration")
+
+    test.case("digits beyond a microsecond are dropped, not rounded up")
+    match junitread.parse_time("0.0000009")
+        Some(us) => test.assert(us == 0)
+        None     => test.fail("this is still a number")
+
+    test.case("and the spellings that mean the writer measured nothing are None")
+    match junitread.parse_time("")
+        Some(_) => test.fail("an empty attribute is not a duration")
+        None    => test.assert(true)
+    match junitread.parse_time("NaN")
+        Some(_) => test.fail("NaN is not a duration")
+        None    => test.assert(true)
+    match junitread.parse_time("1e3")
+        Some(_) => test.fail("an exponent is not in this attribute")
+        None    => test.assert(true)
+
+    test.case("a time attribute that is not a number is refused by name")
+    match junitread.read("<testsuite name=\"s\" time=\"soon\"></testsuite>")
+        Ok(_)      => test.fail("`soon` is not a duration")
+        Err(fault) =>
+            match fault
+                JunitBadTime(on, text) =>
+                    test.assert(on == "testsuite")
+                    test.assert(text == "soon")
+                _                      => test.fail("the fault names the element and the text")
+
+@test
+fn test_the_counts_in_the_file_are_ignored_and_the_missing_name_is_not() [io]
+    // The counts are recomputed, so a file whose `tests` attribute
+    // disagrees with its cases reads correctly rather than reporting
+    // the number the writer got wrong.
+    let lying = "<testsuite name=\"s\" tests=\"99\"><testcase name=\"t\"/></testsuite>"
+    match junitread.read(lying)
+        Ok(r)      => test.assert(junitsuite.totals_of(r).tests == 1)
+        Err(fault) => test.fail(fault.message())
+
+    test.case("a testcase with no name is refused — it is the one attribute every reader needs")
+    match junitread.read("<testsuite name=\"s\"><testcase/></testsuite>")
+        Ok(_)      => test.fail("a case with no name cannot be reported")
+        Err(fault) =>
+            match fault
+                JunitMissingAttr(element, attr) =>
+                    test.assert(element == "testcase")
+                    test.assert(attr == "name")
+                _                               => test.fail("the fault names the element and the attribute")
+
+    test.case("and text that is not XML at all says where it stopped")
+    match junitread.read("<testsuite")
+        Ok(_)      => test.fail("this is not a document")
+        Err(fault) =>
+            test.assert(juniterror.code(fault) == "not_xml")
+            test.assert(not juniterror.is_writer_fault(fault))

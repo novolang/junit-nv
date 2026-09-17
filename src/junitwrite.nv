@@ -1,0 +1,279 @@
+// junitwrite.nv — the document, appended to a buffer the caller owns.
+//
+// THE WRITER APPENDS, IT DOES NOT PRINT
+//
+// Every function here takes the buffer to write into and answers the
+// buffer it wrote.  Nothing here opens a file and nothing here decides
+// that a report appears on a console: a caller that wants a file
+// writes the bytes to one, and a caller assembling several reports
+// hands the same buffer to each.
+//
+// WHAT IT REFUSES, AND WHY THAT IS THE FEATURE
+//
+// `system-out` carries whatever a test printed.  XML 1.0 section 2.2
+// admits tab, newline, carriage return and U+0020 upwards, and admits
+// no other control character at all — a character reference does not
+// help, because `&#1;` is as ill-formed as the byte it names.  A
+// writer that emits one produces a file that the CI reading it will
+// reject, usually hours later and usually as a failure attributed to
+// the wrong test.
+//
+// So this writer answers `JunitUnwritable` and names the offset.  A
+// caller that would rather lose the byte calls `sanitize_text` first,
+// which makes the loss a line in its own source instead of a silent
+// difference between what a test printed and what the report says it
+// printed.
+//
+// THE COUNTS ARE WRITTEN FROM THE CASES
+//
+// `tests`, `failures`, `errors` and `skipped` come from
+// `junitsuite.totals_of`, never from a field, because there is no
+// field.  A document this writer produces cannot disagree with itself.
+
+use junitsuite
+use juniterror
+
+// How a document is laid out and how much of it is written.
+//
+// ```novo
+// use junitwrite
+//
+// fn main() [io]
+//     println("${junitwrite.options().indent}")
+// ```
+pub struct JunitWriteOptions
+    // Spaces per level of nesting, or `0` for one line with no
+    // whitespace between elements.  Whitespace between elements is not
+    // significant to any reader of this format, so this is for a human
+    // opening the file.
+    indent: Int
+    // Whether to write the `<?xml version="1.0" encoding="UTF-8"?>`
+    // declaration first.  On by default: several CI readers refuse a
+    // document without one.
+    declaration: Bool
+    // Decimal places on a `time` attribute — `3` is what most writers
+    // emit and `6` is the finest anybody does.  A duration that needs
+    // more places than this is `JunitTimeTooPrecise` rather than a
+    // number quietly rounded.
+    time_decimals: Int
+    // Whether a report holding exactly one suite is written as a bare
+    // `<testsuite>` root instead of a `<testsuites>` wrapper.  Some
+    // readers accept only one of the two shapes.
+    bare_root: Bool
+    // Whether to write `system-out` and `system-err` elements at all.
+    // Off is for a report going somewhere with a size limit: the
+    // output of a noisy suite is almost all of the bytes.
+    output_elements: Bool
+
+// The defaults: two-space indent, a declaration, three decimal places,
+// a `testsuites` root, and the output elements written.
+//
+// ```novo
+// use junitwrite
+//
+// fn main() [io]
+//     println("${junitwrite.options().time_decimals}")
+// ```
+pub fn options() -> JunitWriteOptions []
+    todo("junit-nv.junitwrite.options")
+
+// The smallest document that says the same thing: no indent, no
+// declaration, no output elements.
+//
+// What a program piping a report into another program wants.
+//
+// ```novo
+// use junitwrite
+//
+// fn main() [io]
+//     println("${junitwrite.compact().indent}")
+// ```
+pub fn compact() -> JunitWriteOptions []
+    todo("junit-nv.junitwrite.compact")
+
+// The same options with a bare `<testsuite>` root for a
+// one-suite report.
+//
+// ```novo
+// use junitwrite
+//
+// fn main() [io]
+//     println("${junitwrite.bare_suite(junitwrite.options()).bare_root}")
+// ```
+pub fn bare_suite(o: JunitWriteOptions) -> JunitWriteOptions []
+    todo("junit-nv.junitwrite.bare_suite")
+
+// The same options with a different number of decimal places on a
+// duration.
+//
+// ```novo
+// use junitwrite
+//
+// fn main() [io]
+//     let o = junitwrite.with_time_decimals(junitwrite.options(), 6)
+//     println("${o.time_decimals}")
+// ```
+pub fn with_time_decimals(o: JunitWriteOptions, decimals: Int) -> JunitWriteOptions []
+    todo("junit-nv.junitwrite.with_time_decimals")
+
+// The same options with the `system-out` and `system-err` elements
+// left out.
+//
+// ```novo
+// use junitwrite
+//
+// fn main() [io]
+//     println("${junitwrite.without_output(junitwrite.options()).output_elements}")
+// ```
+pub fn without_output(o: JunitWriteOptions) -> JunitWriteOptions []
+    todo("junit-nv.junitwrite.without_output")
+
+// The whole report, appended to `out`.
+//
+// The counts on every element come from the cases under it.  The
+// answer is `JunitUnwritable` when any text in the report holds a
+// character XML 1.0 cannot carry, naming the element and the offset,
+// and nothing is appended in that case — a caller retries with
+// sanitised text rather than trimming a half-written document.
+//
+// ```novo
+// use junitsuite
+// use junitwrite
+//
+// fn main() [io]
+//     let r = junitsuite.report([junitsuite.suite("xml_tests")])
+//     match junitwrite.write_report([], r, junitwrite.options())
+//         Ok(bytes)  => println("${list.len(bytes)} byte(s)")
+//         Err(fault) => println(fault.message())
+// ```
+pub fn write_report(out: [u8], r: junitsuite.JunitReport,
+                    o: JunitWriteOptions) -> Result<[u8], juniterror.JunitFault> []
+    todo("junit-nv.junitwrite.write_report")
+
+// One suite as a `<testsuite>` element, appended to `out`.
+//
+// For a caller streaming a suite at a time into a file it is already
+// writing, rather than holding every suite of a long run in memory.
+// The caller writes the `<testsuites>` open and close tags itself,
+// which is what `write_open` and `write_close` are for.
+//
+// ```novo
+// use junitsuite
+// use junitwrite
+//
+// fn main() [io]
+//     match junitwrite.write_suite([], junitsuite.suite("s"), junitwrite.options())
+//         Ok(bytes)  => println("${list.len(bytes)} byte(s)")
+//         Err(fault) => println(fault.message())
+// ```
+pub fn write_suite(out: [u8], s: junitsuite.JunitSuite,
+                   o: JunitWriteOptions) -> Result<[u8], juniterror.JunitFault> []
+    todo("junit-nv.junitwrite.write_suite")
+
+// The declaration and the `<testsuites>` open tag, with the counts the
+// caller supplies.
+//
+// The counts cannot be derived here: a caller streaming suites has not
+// got them until the run ends.  A caller that does not know them
+// passes a `JunitTotals` of zeros and accepts that the attributes say
+// zero, which every reader in the field tolerates because it recounts
+// from the cases.
+//
+// ```novo
+// use junitsuite
+// use junitwrite
+//
+// fn main() [io]
+//     let totals = junitsuite.totals_of(junitsuite.report([]))
+//     match junitwrite.write_open([], "novo test", totals, junitwrite.options())
+//         Ok(bytes)  => println("${list.len(bytes)} byte(s)")
+//         Err(fault) => println(fault.message())
+// ```
+pub fn write_open(out: [u8], name: Str, totals: junitsuite.JunitTotals,
+                  o: JunitWriteOptions) -> Result<[u8], juniterror.JunitFault> []
+    todo("junit-nv.junitwrite.write_open")
+
+// The `</testsuites>` close tag.
+//
+// ```novo
+// use junitwrite
+//
+// fn main() [io]
+//     println("${list.len(junitwrite.write_close([], junitwrite.options()))}")
+// ```
+pub fn write_close(out: [u8], o: JunitWriteOptions) -> [u8] []
+    todo("junit-nv.junitwrite.write_close")
+
+// The whole report as a string.
+//
+// The convenience over `write_report` for a caller that is going to
+// hold the document anyway.  A report of ten thousand cases is a
+// string of several megabytes, and `write_report` into a buffer the
+// caller reuses is the form that does not build one.
+//
+// ```novo
+// use junitsuite
+// use junitwrite
+//
+// fn main() [io]
+//     match junitwrite.to_str(junitsuite.report([]), junitwrite.options())
+//         Ok(text)   => println("${str.len(text)} character(s)")
+//         Err(fault) => println(fault.message())
+// ```
+pub fn to_str(r: junitsuite.JunitReport,
+              o: JunitWriteOptions) -> Result<Str, juniterror.JunitFault> []
+    todo("junit-nv.junitwrite.to_str")
+
+// The same text with every character XML 1.0 cannot carry removed.
+//
+// Tab, newline and carriage return are kept, because section 2.2
+// admits them.  Every other character below U+0020 is dropped, and so
+// is U+FFFE and U+FFFF.  Nothing is substituted: a replacement
+// character would be a character the test did not print.
+//
+// This is the explicit way to lose a byte, and it is a separate
+// function rather than an option on the writer so that the loss
+// appears in the caller's own source.
+//
+// ```novo
+// use junitwrite
+//
+// fn main() [io]
+//     println(junitwrite.sanitize_text("progress\u{1}bar"))
+// ```
+pub fn sanitize_text(text: Str) -> Str []
+    todo("junit-nv.junitwrite.sanitize_text")
+
+// The byte offset of the first character XML 1.0 cannot carry, or
+// `-1`.
+//
+// What the writer answers `JunitUnwritable` from, available on its own
+// so a caller can check a string before it builds a report out of it.
+//
+// ```novo
+// use junitwrite
+//
+// fn main() [io]
+//     println("${junitwrite.first_unwritable("hello")}")
+// ```
+pub fn first_unwritable(text: Str) -> Int []
+    todo("junit-nv.junitwrite.first_unwritable")
+
+// A duration as the `time` attribute writes it: seconds, with
+// `decimals` places.
+//
+// `1500` microseconds with three places is `"0.002"`, because the
+// attribute is rounded to what it can hold.  A value that would lose a
+// non-zero digit is `None`, which is what the writer turns into
+// `JunitTimeTooPrecise`.
+//
+// ```novo
+// use junitwrite
+//
+// fn main() [io]
+//     match junitwrite.format_time(1500000, 3)
+//         Some(text) => println(text)
+//         None       => println("needs more decimal places")
+// ```
+pub fn format_time(time_us: Int, decimals: Int) -> ?Str []
+    todo("junit-nv.junitwrite.format_time")

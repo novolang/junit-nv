@@ -1,0 +1,198 @@
+// junitsuite_tests.nv — the report as a value, and the two decisions
+// the values encode.
+//
+// RED ON PURPOSE: every assertion here reaches `not implemented:
+// junit-nv.junitsuite.<fn>`.  What is asserted is that a case has one
+// outcome, that the counts are computed from the cases rather than
+// carried beside them, and that a duration survives a round trip.
+
+use std.test
+use junitsuite
+
+@test
+fn test_a_case_starts_passed_and_every_builder_changes_one_thing() [io]
+    // A `testcase` with no child element is a test that passed, which
+    // is the schema's own rule, so that is what a fresh case is.
+    let c = junitsuite.case("parses an empty document", "xml_tests")
+
+    test.case("the name and the class name are what was given")
+    test.assert(c.name == "parses an empty document")
+    test.assert(c.classname == "xml_tests")
+
+    test.case("and nothing else is set")
+    test.assert(junitsuite.is_passed(c.outcome))
+    test.assert(c.time_us == 0)
+    test.assert(c.system_out == "")
+    test.assert(c.system_err == "")
+    test.assert(c.file == "")
+    test.assert(c.line == 0)
+
+    test.case("with_time sets the duration and leaves the rest alone")
+    let timed = junitsuite.with_time(c, 1500)
+    test.assert(timed.time_us == 1500)
+    test.assert(timed.name == c.name)
+
+    test.case("with_system_out and with_system_err are separate streams")
+    let out = junitsuite.with_system_out(c, "hello")
+    let err = junitsuite.with_system_err(c, "warning")
+    test.assert(out.system_out == "hello")
+    test.assert(out.system_err == "")
+    test.assert(err.system_err == "warning")
+
+    test.case("at_source is what lets a reader open the test")
+    let located = junitsuite.at_source(c, "tests/xml_tests.nv", 42)
+    test.assert(located.file == "tests/xml_tests.nv")
+    test.assert(located.line == 42)
+
+    test.case("a case may carry properties of its own")
+    let with_props = junitsuite.with_case_properties(c, [junitsuite.property("retries", "2")])
+    test.assert(list.len(with_props.properties) == 1)
+
+@test
+fn test_a_case_has_exactly_one_outcome() [io]
+    // The whole reason `JunitOutcome` is an enum and not four optional
+    // fields: a case cannot be both failed and skipped, so no reader
+    // ever has to decide which of two elements wins.
+    let failed = junitsuite.with_outcome(junitsuite.case("t", "s"),
+                                         JunitFailure("expected 2, got 3", "assert_eq", ""))
+
+    test.case("a failure is a failure and nothing else")
+    test.assert(junitsuite.is_failure(failed.outcome))
+    test.assert(not junitsuite.is_errored(failed.outcome))
+    test.assert(not junitsuite.is_skipped(failed.outcome))
+    test.assert(not junitsuite.is_passed(failed.outcome))
+
+    test.case("an error is not a failure — a crash is not a result")
+    let errored = junitsuite.with_outcome(junitsuite.case("t", "s"),
+                                          JunitErrored("segmentation fault", "signal", ""))
+    test.assert(junitsuite.is_errored(errored.outcome))
+    test.assert(not junitsuite.is_failure(errored.outcome))
+
+    test.case("the element name each outcome is written as")
+    test.assert(junitsuite.outcome_tag(JunitPassed) == "")
+    test.assert(junitsuite.outcome_tag(JunitSkipped("")) == "skipped")
+    test.assert(junitsuite.outcome_tag(failed.outcome) == "failure")
+    test.assert(junitsuite.outcome_tag(errored.outcome) == "error")
+
+    test.case("and the message an outcome carries, without a match at the call site")
+    test.assert(junitsuite.outcome_message(failed.outcome) == "expected 2, got 3")
+    test.assert(junitsuite.outcome_message(JunitPassed) == "")
+
+@test
+fn test_the_counts_are_computed_from_the_cases() [io]
+    // There is no `tests` field to disagree with the list of cases,
+    // which is what stops a document from reporting a number no list
+    // of cases explains.
+    let cases = [junitsuite.case("a", "s"),
+                 junitsuite.with_outcome(junitsuite.case("b", "s"),
+                                         JunitFailure("no", "assert", "")),
+                 junitsuite.with_outcome(junitsuite.case("c", "s"),
+                                         JunitErrored("boom", "signal", "")),
+                 junitsuite.with_outcome(junitsuite.case("d", "s"),
+                                         JunitSkipped("no fixture"))]
+    let s = junitsuite.with_cases(junitsuite.suite("xml_tests"), cases)
+
+    test.case("one of each, counted off the cases")
+    let t = junitsuite.suite_totals(s)
+    test.assert(t.tests == 4)
+    test.assert(t.failures == 1)
+    test.assert(t.errors == 1)
+    test.assert(t.skipped == 1)
+    test.assert(t.passed == 1)
+
+    test.case("a report's totals are the sum over its suites")
+    let r = junitsuite.report([s, s])
+    test.assert(junitsuite.totals_of(r).tests == 8)
+    test.assert(junitsuite.totals_of(r).failures == 2)
+
+    test.case("green means no failures and no errors — a skip is not one")
+    test.assert(not junitsuite.is_green(r))
+    let skips = junitsuite.with_cases(junitsuite.suite("s"),
+                                      [junitsuite.with_outcome(junitsuite.case("d", "s"),
+                                                               JunitSkipped(""))])
+    test.assert(junitsuite.is_green(junitsuite.report([skips])))
+
+@test
+fn test_a_duration_is_microseconds_so_it_round_trips() [io]
+    // The `time` attribute is a decimal number of seconds, which is a
+    // float in the file.  Carrying an integer count of microseconds is
+    // what stops a report read and written again from changing its own
+    // numbers.
+    let cases = [junitsuite.with_time(junitsuite.case("a", "s"), 125000),
+                 junitsuite.with_time(junitsuite.case("b", "s"), 875000)]
+    let s = junitsuite.with_suite_time(junitsuite.with_cases(junitsuite.suite("s"), cases),
+                                       1250000)
+
+    test.case("the cases' durations are summed exactly")
+    test.assert(junitsuite.suite_totals(s).time_us == 1000000)
+
+    test.case("and the suite's own duration is not that sum — the gap is its setup")
+    test.assert(s.time_us == 1250000)
+
+@test
+fn test_a_suite_carries_where_it_ran_and_a_report_carries_the_run() [io]
+    let s = junitsuite.with_origin(
+                junitsuite.with_timestamp(junitsuite.suite("xml_tests"),
+                                          "2026-09-17T09:41:00"),
+                "ci-7", "orbit.xml")
+
+    test.case("the timestamp is the text that will be written")
+    test.assert(s.timestamp == "2026-09-17T09:41:00")
+    test.assert(s.hostname == "ci-7")
+    test.assert(s.package == "orbit.xml")
+
+    test.case("a suite's own output sits outside any case")
+    let noisy = junitsuite.with_suite_output(s, "setup ok", "a warning")
+    test.assert(noisy.system_out == "setup ok")
+    test.assert(noisy.system_err == "a warning")
+
+    test.case("a report names the run and how long all of it took")
+    let r = junitsuite.with_run(junitsuite.report([s]), "novo test", 120000)
+    test.assert(r.name == "novo test")
+    test.assert(r.time_us == 120000)
+    test.assert(list.len(r.suites) == 1)
+
+    test.case("an id is -1 until a document says otherwise")
+    test.assert(s.id == 0 - 1)
+
+@test
+fn test_a_timestamp_is_checked_for_shape_and_nothing_more() [io]
+    // This package reads no clock and holds no calendar, so it knows
+    // whether a reader will parse the text and not whether the day
+    // exists.
+    test.case("the shape the attribute wants")
+    test.assert(junitsuite.is_timestamp_shaped("2026-09-17T09:41:00"))
+
+    test.case("a time zone is not part of it")
+    test.assert(not junitsuite.is_timestamp_shaped("2026-09-17T09:41:00Z"))
+
+    test.case("and a date nobody had is still shaped")
+    test.assert(junitsuite.is_timestamp_shaped("2026-02-30T00:00:00"))
+
+    test.case("anything else is not")
+    test.assert(not junitsuite.is_timestamp_shaped("Wed Sep 17 09:41:00 2026"))
+    test.assert(not junitsuite.is_timestamp_shaped(""))
+
+@test
+fn test_properties_are_looked_up_by_name_and_the_first_one_wins() [io]
+    let ps = [junitsuite.property("os", "linux"),
+              junitsuite.property("os", "macos"),
+              junitsuite.property("branch", "main")]
+
+    test.case("a property is a name and a value")
+    test.assert(ps[0].name == "os")
+    test.assert(ps[0].value == "linux")
+
+    test.case("the first with a name wins — the schema does not say a name appears once")
+    match junitsuite.property_value(ps, "os")
+        Some(v) => test.assert(v == "linux")
+        None    => test.fail("os is in the list")
+
+    test.case("and a name nobody recorded is None rather than an empty string")
+    match junitsuite.property_value(ps, "arch")
+        Some(_) => test.fail("arch was never recorded")
+        None    => test.assert(true)
+
+    test.case("properties live on a suite too")
+    let s = junitsuite.with_properties(junitsuite.suite("s"), ps)
+    test.assert(list.len(s.properties) == 3)

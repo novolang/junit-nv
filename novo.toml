@@ -1,0 +1,47 @@
+[package]
+name        = "junit-nv"
+version     = "0.0.1"
+description = "JUnit XML, the report format every CI reads: the de-facto schema as typed values — testsuites and testsuite, testcase with one outcome, failure, error and skipped, properties, system-out and system-err, timestamps and durations — read from a document and written into a caller's buffer, with the characters XML 1.0 cannot carry refused rather than embedded."
+license     = "Apache-2.0"
+
+# An INTERFACE release: every `pub fn` body is a `todo()`, so the
+# signatures and the effect rows are published and nothing is
+# implemented.  `novo pkg publish` recognises the shape and requires
+# both the draft stability and the 0.0.x version; the first
+# implementation is the 0.1.0 published over it.
+stability   = "draft"
+
+# `core`.  A report is a value built from durations and text the caller
+# already holds, and writing one appends to the caller's buffer.  No
+# file is opened and no clock is read: a suite's `timestamp` arrives as
+# the text it will carry, and a duration arrives as an integer count of
+# microseconds, because a `core` package may read neither a clock nor a
+# directory.
+layer       = "core"
+
+category    = "tooling"
+
+tags        = ["junit", "junit-xml", "test-report", "ci", "surefire", "testsuite", "xml", "tooling"]
+repository  = "https://github.com/novolang/junit-nv"
+maintainers = ["novo-lang"]
+novo        = ">= 0.9.0"
+
+# A library: no `main`, so `novo pkg build` type-checks and
+# effect-checks every module under `src/` and writes no binary.
+
+[docs.pages]
+"README.md" = "JUnit XML both ways, with the characters XML cannot carry refused"
+
+[dependencies]
+# xml-nv is the XML, both directions, and taking it rather than
+# carrying a minimal writer is this package's one structural decision.
+#
+# Reading needs a tolerant parser: the reports in the wild are written
+# by a dozen tools and several of them emit attributes in orders and
+# spellings no schema mentions.  Writing needs the ESCAPING, which is
+# where a minimal writer goes wrong: a `system-out` element carries
+# whatever a test printed, and a test prints control characters.
+# `xmlwrite.write_text` refuses what it cannot escape instead of
+# emitting a document no parser will read back, and that refusal is the
+# property this package's writer is built on.
+xml-nv = "^0.0.1"
