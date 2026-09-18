@@ -44,7 +44,7 @@ doc comment; every body is `todo()`; the release is recorded
 - `novo test` is red, and that is the release's expected state: every
   assertion in the API suite reaches `not implemented:
   junit-nv.<module>.<fn>`.
-- **xml-nv is itself an interface at 0.0.1.** This package cannot be
+- **xml-nv is itself an interface at 0.0.2.** This package cannot be
   implemented before xml-nv's parser and writer have bodies. Taking it
   rather than carrying a minimal writer is deliberate: escaping is
   where a minimal writer goes wrong, and `xmlwrite.write_text` already

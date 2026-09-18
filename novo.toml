@@ -44,4 +44,4 @@ novo        = ">= 0.9.0"
 # `xmlwrite.write_text` refuses what it cannot escape instead of
 # emitting a document no parser will read back, and that refusal is the
 # property this package's writer is built on.
-xml-nv = "^0.0.1"
+xml-nv = "^0.0.2"
