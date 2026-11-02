@@ -1,10 +1,9 @@
 // junitsuite_tests.nv — the report as a value, and the two decisions
 // the values encode.
 //
-// RED ON PURPOSE: every assertion here reaches `not implemented:
-// junit-nv.junitsuite.<fn>`.  What is asserted is that a case has one
-// outcome, that the counts are computed from the cases rather than
-// carried beside them, and that a duration survives a round trip.
+// What is asserted is that a case has one outcome, that the counts are
+// computed from the cases rather than carried beside them, and that a
+// duration survives a round trip.
 
 use std.test
 use junitsuite

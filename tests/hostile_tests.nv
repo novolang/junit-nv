@@ -1,0 +1,21 @@
+// hostile_tests.nv — reports that nest, or that carry very many cases.
+
+use std.test
+use junitread
+
+fn settled(r: Result<JunitReport, JunitFault>) -> Bool
+    match r
+        Ok(_)  => true
+        Err(_) => true
+
+@test
+fn test_deep_nesting_is_bounded() [io]
+    test.assert(settled(junitread.read("<testsuites>" + "<testsuite>".repeat(100000) + "</testsuite>".repeat(100000) + "</testsuites>")))
+
+@test
+fn test_many_cases_are_read_in_bounded_time() [io]
+    test.assert(settled(junitread.read("<testsuite name=\"s\">" + "<testcase name=\"a\" time=\"0.1\"/>".repeat(20000) + "</testsuite>")))
+
+@test
+fn test_huge_numbers_are_refused() [io]
+    test.assert(settled(junitread.read("<testsuite name=\"s\" tests=\"99999999999999999999\" time=\"" + "9".repeat(5000) + "\"><testcase name=\"a\" time=\"1e999999999999\"/></testsuite>")))

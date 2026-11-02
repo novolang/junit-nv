@@ -1,10 +1,8 @@
 // junitread_tests.nv — what the reader tolerates and what it refuses.
 //
-// RED ON PURPOSE: every assertion reaches `not implemented:
-// junit-nv.junitread.<fn>`.  What is asserted is that both root shapes
-// read into one value, that a duration truncates rather than rounds,
-// and that the four refusals are refusals rather than a quietly wrong
-// answer.
+// What is asserted is that both root shapes read into one value, that a
+// duration truncates rather than rounds, and that the four refusals are
+// refusals rather than a quietly wrong answer.
 
 use std.test
 use junitread

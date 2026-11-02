@@ -1,0 +1,686 @@
+// junitwrite_edge_tests.nv — the whole document: what the writer emits,
+// and what the reader makes of it coming back.
+//
+// The four API suites are the published oracle and are not edited.  This
+// one is the second pass over the same modules, on the four things a
+// report has to get right before anything else: that the counts on the
+// document agree with the cases under them and the root's with the sum
+// of its suites, that the four case shapes read back as four different
+// outcomes and a case with no child element is a pass, that a failure's
+// text comes back through the escaping unchanged, and that a `timestamp`
+// and a `time` are written as the exact text they are.
+//
+// The rest is the half of each module the four suites leave alone: the
+// fields a writer emits only when a caller set them, the element the
+// writer names when it refuses a character, the fields a reader fills
+// from attributes no writer here emits, the two durations a document
+// carries that are not their cases' sum, and how many bytes a character
+// takes.
+
+use std.test
+use junitsuite
+use junitwrite
+use junitread
+use juniterror
+use xmltree
+
+// A passing case: `testcase` with no child element.
+fn ok_case(name: Str) -> junitsuite.JunitCase
+    junitsuite.with_time(junitsuite.case(name, "xml_tests"), 125000)
+
+// A case that made an assertion that did not hold.
+fn bad_case(name: Str) -> junitsuite.JunitCase
+    junitsuite.with_time(
+        junitsuite.with_outcome(junitsuite.case(name, "xml_tests"),
+                                JunitFailure("expected 2, got 3", "assert_eq", "at line 9")),
+        1500000)
+
+// A case that did not finish.
+fn err_case(name: Str) -> junitsuite.JunitCase
+    junitsuite.with_outcome(junitsuite.case(name, "xml_tests"),
+                            JunitErrored("index out of range", "panic", "frames"))
+
+// A case that did not run.
+fn skip_case(name: Str) -> junitsuite.JunitCase
+    junitsuite.with_outcome(junitsuite.case(name, "xml_tests"), JunitSkipped("no fixture"))
+
+// One suite carrying all four shapes, with the two attributes whose text
+// this file pins.
+fn shapes_suite() -> junitsuite.JunitSuite
+    var s = junitsuite.suite("xml_tests")
+    s = junitsuite.with_cases(s, [ok_case("parses"), bad_case("rejects"),
+                                  err_case("crashes"), skip_case("ignored")])
+    s = junitsuite.with_suite_time(s, 1250000)
+    junitsuite.with_timestamp(s, "2026-10-12T09:30:00")
+
+// A report of two suites: the four shapes, and two more passes.
+fn two_suites() -> junitsuite.JunitReport
+    let second = junitsuite.with_cases(junitsuite.suite("other"),
+                                       [ok_case("one"), ok_case("two")])
+    junitsuite.with_run(junitsuite.report([shapes_suite(), second]), "novo test", 2250000)
+
+// `two_suites` as a document.
+fn written() -> Str
+    match junitwrite.to_str(two_suites(), junitwrite.options())
+        Ok(text)   => text
+        Err(fault) => "could not write: " + fault.message()
+
+// `two_suites` read back from its own document.
+fn reread() -> junitsuite.JunitReport
+    match junitread.read(written())
+        Ok(r)      => r
+        Err(fault) => junitsuite.with_run(junitsuite.report([]), "read failed", 0)
+
+// `text` with a control character on the end: the shortest way to ask
+// the writer to refuse a field.
+fn noisy(text: Str) -> Str
+    text + "\u{1}"
+
+// The element the writer refuses this report over, `"too precise"` when
+// it is a duration it cannot render, and `"wrote it"` when it writes
+// one.
+fn refused_in(r: junitsuite.JunitReport) -> Str
+    match junitwrite.write_report([], r, junitwrite.options())
+        Ok(_)      => "wrote it"
+        Err(fault) =>
+            match fault
+                JunitUnwritable(element, _, _) => element
+                JunitTimeTooPrecise(_, _)      => "too precise"
+                _                              => "another fault"
+
+// One suite, one case, and nothing else.
+fn plain() -> junitsuite.JunitReport
+    junitsuite.report([junitsuite.with_cases(junitsuite.suite("s"), [ok_case("t")])])
+
+// `plain` with a new name on the report.
+fn named(name: Str) -> junitsuite.JunitReport
+    junitsuite.with_run(plain(), name, 0)
+
+// `plain` with one suite carrying `s`'s fields.
+fn with_suite(s: junitsuite.JunitSuite) -> junitsuite.JunitReport
+    junitsuite.report([s])
+
+// `plain` with one case carrying `c`'s fields.
+fn with_case(c: junitsuite.JunitCase) -> junitsuite.JunitReport
+    junitsuite.report([junitsuite.with_cases(junitsuite.suite("s"), [c])])
+
+@test
+fn test_every_fault_message_says_what_was_found() [io]
+    // What a caller prints when it does not pattern-match: the one-line
+    // message, per fault.  The oracle names four of the seven.
+    test.case("a document that is not XML names the byte and the reason")
+    let not_xml = JunitNotXml(12, "unclosed tag")
+    test.assert_eq_str(not_xml.message(),
+                       "the document is not well-formed XML at byte 12: unclosed tag")
+
+    test.case("a missing attribute names the element and the attribute")
+    let missing = JunitMissingAttr("testcase", "name")
+    test.assert_eq_str(missing.message(), "the testcase has no name attribute")
+
+    test.case("a time that is not a number names the text and the element")
+    let bad_time = JunitBadTime("testsuite", "soon")
+    test.assert_eq_str(bad_time.message(), "'soon' is not a number of seconds on the testsuite")
+
+    test.case("two outcome elements name the case they are on")
+    let two = JunitTwoOutcomes("rejects")
+    test.assert_eq_str(two.message(), "the testcase 'rejects' carries two outcome elements")
+
+@test
+fn test_the_other_two_outcomes_carry_their_message() [io]
+    test.case("an error's message is the panic text")
+    let err = junitsuite.with_outcome(junitsuite.case("t", "s"),
+                                      JunitErrored("index out of range", "panic", "frames"))
+    test.assert_eq_str(junitsuite.outcome_message(err.outcome), "index out of range")
+
+    test.case("and a skip's is why it did not run")
+    let skip = junitsuite.with_outcome(junitsuite.case("t", "s"), JunitSkipped("no fixture"))
+    test.assert_eq_str(junitsuite.outcome_message(skip.outcome), "no fixture")
+
+@test
+fn test_the_writer_names_the_element_of_the_first_unwritable_character() [io]
+    // One write per field, because a write stops at the first one: the
+    // element name is what tells a caller which field of a report it
+    // built holds a character XML cannot carry.
+    test.case("a property's name, and its value")
+    test.assert_eq_str(refused_in(with_suite(junitsuite.with_properties(
+        junitsuite.suite("s"), [junitsuite.property(noisy("branch"), "main")]))),
+        "property")
+    test.assert_eq_str(refused_in(with_suite(junitsuite.with_properties(
+        junitsuite.suite("s"), [junitsuite.property("branch", noisy("main"))]))),
+        "property")
+
+    test.case("a case's name, its class name and its file")
+    test.assert_eq_str(refused_in(with_case(junitsuite.case(noisy("t"), "s"))), "testcase")
+    test.assert_eq_str(refused_in(with_case(junitsuite.case("t", noisy("s")))), "testcase")
+    test.assert_eq_str(refused_in(with_case(junitsuite.at_source(junitsuite.case("t", "s"),
+                                                                 noisy("t.nv"), 1))),
+                                                                 "testcase")
+
+    test.case("a case's own properties")
+    test.assert_eq_str(refused_in(with_case(junitsuite.with_case_properties(
+        junitsuite.case("t", "s"), [junitsuite.property("b", noisy("v"))]))),
+        "property")
+
+    test.case("a failure's message, its type, and its character data")
+    test.assert_eq_str(refused_in(with_case(junitsuite.with_outcome(
+        junitsuite.case("t", "s"), JunitFailure(noisy("expected 2"), "assert_eq", "")))),
+        "failure")
+    test.assert_eq_str(refused_in(with_case(junitsuite.with_outcome(
+        junitsuite.case("t", "s"), JunitFailure("expected 2", noisy("assert_eq"), "")))),
+        "failure")
+    test.assert_eq_str(refused_in(with_case(junitsuite.with_outcome(
+        junitsuite.case("t", "s"), JunitFailure("expected 2", "assert_eq", noisy("at line 9"))))),
+        "failure")
+
+    test.case("a case's system-err")
+    test.assert_eq_str(refused_in(with_case(
+        junitsuite.with_system_err(junitsuite.case("t", "s"), noisy("progress\u{8}")))),
+        "system-err")
+
+    test.case("a suite's name, its package, its timestamp and its hostname")
+    test.assert_eq_str(refused_in(with_suite(junitsuite.suite(noisy("s")))), "testsuite")
+    test.assert_eq_str(refused_in(with_suite(junitsuite.with_origin(junitsuite.suite("s"),
+                                                                    "", noisy("pkg")))),
+                                                                    "testsuite")
+    test.assert_eq_str(refused_in(with_suite(junitsuite.with_timestamp(
+        junitsuite.suite("s"), noisy("2026-10-12T09:30:00")))),
+        "testsuite")
+    test.assert_eq_str(refused_in(with_suite(junitsuite.with_origin(junitsuite.suite("s"),
+                                                                    noisy("builder"), ""))),
+                                                                    "testsuite")
+
+    test.case("a suite's properties, its system-out and its system-err")
+    test.assert_eq_str(refused_in(with_suite(junitsuite.with_properties(
+        junitsuite.suite("s"), [junitsuite.property(noisy("b"), "v")]))),
+        "property")
+    test.assert_eq_str(refused_in(with_suite(junitsuite.with_suite_output(
+        junitsuite.suite("s"), noisy("printed"), ""))),
+        "system-out")
+    test.assert_eq_str(refused_in(with_suite(junitsuite.with_suite_output(
+        junitsuite.suite("s"), "", noisy("warned")))),
+        "system-err")
+
+    test.case("a run's name")
+    test.assert_eq_str(refused_in(named(noisy("novo test"))), "testsuites")
+
+    test.case("and each of the three durations the document carries")
+    test.assert_eq_str(refused_in(junitsuite.with_run(plain(), "novo test", 1500)), "too precise")
+    test.assert_eq_str(refused_in(with_suite(junitsuite.with_suite_time(junitsuite.suite("s"),
+                                                                       1500))),
+                                                                       "too precise")
+    test.assert_eq_str(refused_in(with_case(junitsuite.with_time(junitsuite.case("t", "s"),
+                                                                1500))),
+                                                                "too precise")
+
+@test
+fn test_each_entry_point_refuses_unwritable_text() [io]
+    // The three other doors into the writer, each answering the same
+    // fault rather than writing half a document.
+    test.case("write_suite refuses the suite it cannot write")
+    let s = junitsuite.suite(noisy("s"))
+    match junitwrite.write_suite([], s, junitwrite.options())
+        Ok(_)      => test.fail("this suite holds a control character")
+        Err(fault) =>
+            match fault
+                JunitUnwritable(element, at, byte_value) =>
+                    test.assert(element == "testsuite")
+                    test.assert(at == 1)
+                    test.assert(byte_value == 1)
+                _                                        => test.fail("the refusal names the character and its offset")
+
+    test.case("write_open refuses the run's name")
+    let totals = junitsuite.totals_of(junitsuite.report([]))
+    match junitwrite.write_open([], noisy("novo test"), totals, junitwrite.options())
+        Ok(_)      => test.fail("this name holds a control character")
+        Err(fault) => test.assert(juniterror.is_writer_fault(fault))
+
+    test.case("and refuses a duration it cannot render")
+    let slow = JunitTotals { tests: 0, failures: 0, errors: 0, skipped: 0, passed: 0, time_us: 1500 }
+    match junitwrite.write_open([], "novo test", slow, junitwrite.options())
+        Ok(_)      => test.fail("1500 microseconds does not fit three decimal places")
+        Err(fault) => test.assert(juniterror.is_writer_fault(fault))
+
+    test.case("and to_str refuses the whole report")
+    match junitwrite.to_str(with_case(junitsuite.case(noisy("t"), "s")), junitwrite.options())
+        Ok(_)      => test.fail("this report holds a control character")
+        Err(fault) => test.assert(juniterror.is_writer_fault(fault))
+
+@test
+fn test_the_optional_half_of_an_element_is_written_only_when_it_is_there() [io]
+    let o = junitwrite.options()
+
+    test.case("compact is one line with no whitespace, so the indent is skipped")
+    let small = junitsuite.with_run(plain(), "novo test", 1000000)
+    match junitwrite.to_str(small, junitwrite.compact())
+        Ok(text)   =>
+            test.assert(str.contains(text, "<testsuites name=\"novo test\""))
+            test.assert(str.contains(text, "<testcase name=\"t\" classname=\"xml_tests\" time=\"0.125\">"))
+        Err(fault) => test.fail(fault.message())
+
+    test.case("a failure with no character data is an empty element")
+    let bare = junitsuite.with_outcome(junitsuite.case("t", "s"),
+                                       JunitFailure("expected 2, got 3", "assert_eq", ""))
+    match junitwrite.to_str(with_case(bare), o)
+        Ok(text)   => test.assert(str.contains(text, "<failure message=\"expected 2, got 3\" type=\"assert_eq\"/>"))
+        Err(fault) => test.fail(fault.message())
+
+    test.case("a suite's id goes in when it has one, and not when it is -1")
+    let numbered = junitsuite.with_id(junitsuite.suite("s"), 0)
+    match junitwrite.to_str(with_suite(numbered), o)
+        Ok(text)   => test.assert(str.contains(text, "id=\"0\""))
+        Err(fault) => test.fail(fault.message())
+    match junitwrite.to_str(plain(), o)
+        Ok(text)   => test.assert(not str.contains(text, "id=\""))
+        Err(fault) => test.fail(fault.message())
+
+    test.case("a case's line goes in only when it is past zero")
+    let placed = junitsuite.at_source(junitsuite.case("t", "s"), "t.nv", 42)
+    match junitwrite.to_str(with_case(placed), o)
+        Ok(text)   =>
+            test.assert(str.contains(text, "file=\"t.nv\" line=\"42\""))
+        Err(fault) => test.fail(fault.message())
+    match junitwrite.to_str(with_case(junitsuite.at_source(junitsuite.case("t", "s"), "t.nv", 0)), o)
+        Ok(text)   => test.assert(not str.contains(text, "line=\""))
+        Err(fault) => test.fail(fault.message())
+
+    test.case("properties are written as their own element, and only when there are any")
+    let ps = [junitsuite.property("branch", "main"), junitsuite.property("os", "linux")]
+    match junitwrite.to_str(with_suite(junitsuite.with_properties(junitsuite.suite("s"), ps)), o)
+        Ok(text)   =>
+            test.assert(str.contains(text, "<properties>"))
+            test.assert(str.contains(text, "<property name=\"branch\" value=\"main\"/>"))
+            test.assert(str.contains(text, "<property name=\"os\" value=\"linux\"/>"))
+            test.assert(str.contains(text, "</properties>"))
+        Err(fault) => test.fail(fault.message())
+    match junitwrite.to_str(plain(), o)
+        Ok(text)   => test.assert(not str.contains(text, "<properties>"))
+        Err(fault) => test.fail(fault.message())
+
+    test.case("system-err is written when the suite or the case printed one")
+    match junitwrite.to_str(with_suite(junitsuite.with_suite_output(junitsuite.suite("s"), "", "warned")), o)
+        Ok(text)   => test.assert(str.contains(text, "<system-err>warned</system-err>"))
+        Err(fault) => test.fail(fault.message())
+    match junitwrite.to_str(with_case(junitsuite.with_system_err(junitsuite.case("t", "s"), "warned")),
+                            junitwrite.without_output(o))
+        Ok(text)   => test.assert(not str.contains(text, "system-err"))
+        Err(fault) => test.fail(fault.message())
+
+    test.case("a one-suite report can be written as a bare testsuite root")
+    match junitwrite.to_str(plain(), junitwrite.bare_suite(o))
+        Ok(text)   =>
+            test.assert(str.contains(text, "<testsuite name=\"s\""))
+            test.assert(not str.contains(text, "<testsuites"))
+        Err(fault) => test.fail(fault.message())
+
+@test
+fn test_a_duration_is_rendered_with_the_places_it_was_asked_for() [io]
+    test.case("no decimal places is the whole second, and a fraction would be lost")
+    match junitwrite.format_time(2000000, 0)
+        Some(t) => test.assert_eq_str(t, "2")
+        None    => test.fail("two seconds is two whole seconds")
+    match junitwrite.format_time(1250000, 0)
+        Some(_) => test.fail("a quarter second does not fit no decimal places")
+        None    => test.assert(true)
+
+    test.case("more places than a microsecond holds are zeros")
+    match junitwrite.format_time(1500, 9)
+        Some(t) => test.assert_eq_str(t, "0.001500000")
+        None    => test.fail("nine places hold 1500 microseconds")
+
+    test.case("and a duration below zero has no text at all")
+    match junitwrite.format_time(0 - 1, 3)
+        Some(_) => test.fail("there is no negative duration")
+        None    => test.assert(true)
+
+@test
+fn test_a_character_is_measured_by_its_bytes() [io]
+    // `first_unwritable` walks a string one character at a time, so it
+    // has to know how many bytes each one takes; a bad sequence is
+    // refused rather than walked into.
+    test.case("ascii is one byte, and a two-byte character is two")
+    test.assert(junitwrite.first_unwritable("hello") == 0 - 1)
+    test.assert(junitwrite.first_unwritable("caf\u{e9}") == 0 - 1)
+
+    test.case("a three-byte character is three")
+    test.assert(junitwrite.first_unwritable("\u{20ac}1") == 0 - 1)
+
+    test.case("a four-byte character is four")
+    test.assert(junitwrite.first_unwritable("\u{1f600}x") == 0 - 1)
+
+    test.case("a code point XML refuses, validly encoded, is still refused")
+    test.assert(junitwrite.first_unwritable("\u{ffff}") == 0)
+
+    test.case("a byte that begins no character is refused at its own offset")
+    test.assert(junitwrite.first_unwritable("ab" + str.from_byte(128)) == 2)
+
+    test.case("a sequence that stops in the middle is refused")
+    test.assert(junitwrite.first_unwritable(str.from_byte(226)) == 0)
+
+    test.case("and an overlong encoding is refused")
+    test.assert(junitwrite.first_unwritable(str.from_byte(224) + str.from_byte(128) + str.from_byte(128)) == 0)
+    test.assert(junitwrite.first_unwritable(str.from_byte(240) + str.from_byte(128) + str.from_byte(128) + str.from_byte(128)) == 0)
+
+    test.case("sanitize_text drops the byte that begins no character")
+    test.assert_eq_str(junitwrite.sanitize_text("ab" + str.from_byte(128) + "cd"), "abcd")
+
+    test.case("and drops a whole character the section does not admit")
+    test.assert_eq_str(junitwrite.sanitize_text("a\u{ffff}b"), "ab")
+
+// A report of two suites whose counts are all different from one
+// another — 1 pass, 2 failures, 3 errors and 4 skips in the first, 1
+// pass and 2 errors in the second — so the root's counts (13, 2, 5, 4)
+// can be read off neither suite and no two of the four can be swapped
+// without changing the text.
+fn lopsided() -> junitsuite.JunitReport
+    let big = junitsuite.with_cases(junitsuite.suite("lopsided"),
+                                    [ok_case("pass"),
+                                     bad_case("fail-1"), bad_case("fail-2"),
+                                     err_case("err-1"), err_case("err-2"), err_case("err-3"),
+                                     skip_case("skip-1"), skip_case("skip-2"),
+                                     skip_case("skip-3"), skip_case("skip-4")])
+    let small = junitsuite.with_cases(junitsuite.suite("small"),
+                                      [ok_case("one"), err_case("two"), err_case("three")])
+    junitsuite.with_run(junitsuite.report([big, small]), "lopsided run", 0)
+
+@test
+fn test_the_counts_agree_with_the_cases_under_them() [io]
+    let text = written()
+
+    test.case("the root's counts are the sum over its suites")
+    test.assert(str.contains(text, "<testsuites name=\"novo test\" tests=\"6\" failures=\"1\" errors=\"1\" skipped=\"1\""))
+
+    test.case("and a suite's counts are its own cases")
+    test.assert(str.contains(text,
+        "timestamp=\"2026-10-12T09:30:00\" tests=\"4\" failures=\"1\" errors=\"1\" skipped=\"1\""))
+    test.assert(str.contains(text, "<testsuite name=\"other\" tests=\"2\" failures=\"0\" errors=\"0\" skipped=\"0\""))
+
+    test.case("a case with no duration still writes a time")
+    test.assert(str.contains(text, "<testcase name=\"ignored\" classname=\"xml_tests\" time=\"0.000\""))
+
+    test.case("reading the document back recomputes the same numbers")
+    let r = reread()
+    let t = junitsuite.totals_of(r)
+    test.assert(t.tests == 6)
+    test.assert(t.failures == 1)
+    test.assert(t.errors == 1)
+    test.assert(t.skipped == 1)
+    test.assert(t.passed == 3)
+
+    test.case("the suite's four counts and the root's are the same arithmetic")
+    let a = junitsuite.suite_totals(r.suites[0])
+    let b = junitsuite.suite_totals(r.suites[1])
+    test.assert(t.tests == a.tests + b.tests)
+    test.assert(t.failures == a.failures + b.failures)
+    test.assert(t.errors == a.errors + b.errors)
+    test.assert(t.skipped == a.skipped + b.skipped)
+    test.assert(t.passed == a.passed + b.passed)
+
+    test.case("every count is a case that is in the document")
+    test.assert(a.tests == 4)
+    test.assert(b.tests == 2)
+    test.assert(list.len(r.suites[0].cases) + list.len(r.suites[1].cases) == t.tests)
+
+    test.case("four counts that all differ, so no two of them can be swapped unnoticed")
+    match junitwrite.to_str(lopsided(), junitwrite.options())
+        Ok(one)    =>
+            // The root's counts are the sum of its two suites' (10, 2,
+            // 3, 4 and 3, 0, 2, 0), which is neither suite's row.
+            test.assert(str.contains(one,
+                "<testsuites name=\"lopsided run\" tests=\"13\" failures=\"2\" errors=\"5\" skipped=\"4\""))
+            test.assert(str.contains(one,
+                "<testsuite name=\"lopsided\" tests=\"10\" failures=\"2\" errors=\"3\" skipped=\"4\""))
+            test.assert(str.contains(one, "<testsuite name=\"small\" tests=\"3\" failures=\"0\" errors=\"2\" skipped=\"0\""))
+        Err(fault) => test.fail(fault.message())
+
+@test
+fn test_the_four_shapes_are_four_outcomes_and_a_bare_case_is_a_pass() [io]
+    let r = reread()
+    let cases = r.suites[0].cases
+
+    test.case("no child element is a pass")
+    test.assert(junitsuite.is_passed(cases[0].outcome))
+    test.assert(junitsuite.outcome_tag(cases[0].outcome) == "")
+
+    test.case("a failure is an assertion that did not hold")
+    test.assert(junitsuite.is_failure(cases[1].outcome))
+    test.assert(junitsuite.outcome_tag(cases[1].outcome) == "failure")
+
+    test.case("an error is a test that did not finish, and it is not a failure")
+    test.assert(junitsuite.is_errored(cases[2].outcome))
+    test.assert(not junitsuite.is_failure(cases[2].outcome))
+
+    test.case("a skip is a test that did not run, and it is not a failure either")
+    test.assert(junitsuite.is_skipped(cases[3].outcome))
+    test.assert(not junitsuite.is_failure(cases[3].outcome))
+    test.assert(junitsuite.outcome_tag(cases[3].outcome) == "skipped")
+
+    test.case("a skip carries its message and nothing else")
+    match cases[3].outcome
+        JunitSkipped(message) => test.assert(message == "no fixture")
+        _                     => test.fail("this case carries a skipped element")
+
+    test.case("the four shapes are each exactly one arm")
+    test.assert(not junitsuite.is_passed(cases[1].outcome))
+    test.assert(not junitsuite.is_errored(cases[1].outcome))
+    test.assert(not junitsuite.is_skipped(cases[1].outcome))
+
+    test.case("a document whose case has no child element reads as a pass")
+    match junitread.read("<testsuite name=\"s\"><testcase name=\"t\"/></testsuite>")
+        Ok(bare)   => test.assert(junitsuite.is_passed(bare.suites[0].cases[0].outcome))
+        Err(fault) => test.fail(fault.message())
+
+@test
+fn test_a_skipped_case_is_not_a_disabled_one() [io]
+    // `disabled` is a build-configuration fact, not an outcome: a case
+    // that did not run carries a `skipped` element, and a reader that
+    // reported `disabled="true"` as a skip would report a suite nobody
+    // ran as a suite that ran green with skips.  The attribute is
+    // tolerated and dropped, like every other unknown attribute.
+    let doc = "<testsuite name=\"s\"><testcase name=\"t\" disabled=\"true\"/>"
+        + "<testcase name=\"u\" status=\"notrun\">"
+        + "<skipped message=\"no fixture\"/></testcase></testsuite>"
+
+    match junitread.read(doc)
+        Ok(r)      =>
+            let cases = r.suites[0].cases
+            test.case("a disabled case with no outcome element is a pass")
+            test.assert(junitsuite.is_passed(cases[0].outcome))
+            test.case("and the case that says why it did not run is the skip")
+            test.assert(junitsuite.is_skipped(cases[1].outcome))
+            test.case("so the two are different outcomes")
+            test.assert(not junitsuite.is_skipped(cases[0].outcome))
+            test.assert(not junitsuite.is_passed(cases[1].outcome))
+            test.case("and a suite of one disabled case is green")
+            test.assert(junitsuite.is_green(r))
+        Err(fault) => test.fail(fault.message())
+
+@test
+fn test_a_failure_s_message_survives_the_escaping() [io]
+    // A failure's text is free-form: it holds the assertion's own
+    // spelling, which holds the characters XML needs escaped, and a
+    // stack trace, which holds newlines.  What the test wrote is what
+    // the report has to say.
+    let message = "expected <2> & more\nsecond line"
+    let kind = "assert_eq"
+    let text = "at line 9 <tag> & caf\u{e9}"
+    let case = junitsuite.with_outcome(junitsuite.case("rejects", "xml_tests"),
+                                       JunitFailure(message, kind, text))
+    let r = junitsuite.report([junitsuite.with_cases(junitsuite.suite("s"), [case])])
+
+    match junitwrite.to_str(r, junitwrite.options())
+        Ok(document) =>
+            test.case("the document escapes the message's other and ampersand")
+            test.assert(str.contains(document, "message=\"expected &lt;2> &amp; more&#10;second line\""))
+
+            test.case("and the failure's own text escapes both brackets and the ampersand")
+            test.assert(str.contains(document, "at line 9 &lt;tag&gt; &amp; caf\u{e9}"))
+
+            test.case("a newline in an attribute is a reference, because a parser folds a literal one")
+            test.assert(str.contains(document, "&#10;"))
+
+            test.case("and a character that is not ASCII goes in as itself")
+            test.assert(str.contains(document, "caf\u{e9}"))
+
+            test.case("reading it back answers the text the test wrote, character for character")
+            match junitread.read(document)
+                Ok(back)   =>
+                    match back.suites[0].cases[0].outcome
+                        JunitFailure(m, k, t) =>
+                            test.assert_eq_str(m, message)
+                            test.assert_eq_str(k, kind)
+                            test.assert_eq_str(t, text)
+                        _                     => test.fail("this case carries a failure element")
+                Err(fault) => test.fail(fault.message())
+
+        Err(fault)   => test.fail(fault.message())
+
+@test
+fn test_a_timestamp_and_a_time_are_written_as_the_text_they_are() [io]
+    let text = written()
+
+    test.case("a timestamp is the caller's text, ISO 8601 local and unchanged")
+    test.assert(str.contains(text, "timestamp=\"2026-10-12T09:30:00\""))
+    test.assert(junitsuite.is_timestamp_shaped("2026-10-12T09:30:00"))
+
+    test.case("a time is seconds with the decimal places the options asked for")
+    test.assert(str.contains(text, "time=\"1.250\""))
+    test.assert(str.contains(text, "time=\"0.125\""))
+    test.assert(str.contains(text, "time=\"2.250\""))
+
+    test.case("which is the same number the reader parses back")
+    let r = reread()
+    test.assert(r.time_us == 2250000)
+    test.assert(r.suites[0].time_us == 1250000)
+    test.assert(r.suites[0].cases[0].time_us == 125000)
+    test.assert_eq_str(r.suites[0].timestamp, "2026-10-12T09:30:00")
+
+    test.case("and the same text format_time answers on its own")
+    match junitwrite.format_time(1250000, 3)
+        Some(t) => test.assert_eq_str(t, "1.250")
+        None    => test.fail("1.25 seconds fits three decimal places")
+    match junitwrite.format_time(125000, 3)
+        Some(t) => test.assert_eq_str(t, "0.125")
+        None    => test.fail("125 milliseconds fits three decimal places")
+    match junitwrite.format_time(0, 3)
+        Some(t) => test.assert_eq_str(t, "0.000")
+        None    => test.fail("zero is a duration")
+
+// A document carrying every attribute and child element the reader
+// looks for, including the ones the writer here never emits.
+fn rich_suite_doc() -> Str
+    var d = "<testsuite name=\"xml_tests\" id=\"3\" package=\"satellites/junit-nv\" timestamp=\"2026-10-12T09:30:00\" hostname=\"builder\" time=\"1.250\">"
+    d = d + "<properties><property name=\"branch\" value=\"main\"/></properties>"
+    d = d + "<system-out>printed</system-out><system-err>warned</system-err>"
+    d = d + "<testcase name=\"parses\" classname=\"xml_tests\" file=\"tests/xml_tests.nv\" line=\"42\" time=\"0.125\">"
+    d = d + "<system-out>case out</system-out><system-err>case err</system-err>"
+    d = d + "<properties><property name=\"retries\" value=\"2\"/></properties>"
+    d = d + "</testcase></testsuite>"
+    d
+
+@test
+fn test_the_reader_fills_the_fields_a_writer_here_never_emits() [io]
+    // The reader is written against the reports in the field, not
+    // against this package's writer, so the attributes Maven Surefire
+    // emits and Ant does not are read too.
+    let doc = xmltree.build(rich_suite_doc())
+
+    test.case("a suite read from the document node as well as from its element")
+    let s = match junitread.read_suite(doc, xmltree.root(doc))
+        Ok(suite)  => suite
+        Err(fault) => junitsuite.suite("refused: " + fault.message())
+
+    test.case("the id the document gave it")
+    test.assert(s.id == 3)
+
+    test.case("where it ran, and in what")
+    test.assert_eq_str(s.package, "satellites/junit-nv")
+    test.assert_eq_str(s.hostname, "builder")
+    test.assert_eq_str(s.timestamp, "2026-10-12T09:30:00")
+
+    test.case("its own output, which is not any case's")
+    test.assert_eq_str(s.system_out, "printed")
+    test.assert_eq_str(s.system_err, "warned")
+
+    test.case("its properties")
+    match junitsuite.property_value(s.properties, "branch")
+        Some(v) => test.assert_eq_str(v, "main")
+        None    => test.fail("branch is a property of this suite")
+
+    test.case("and the case under it, with its file and its line")
+    test.assert(list.len(s.cases) == 1)
+    let c = s.cases[0]
+    test.assert_eq_str(c.file, "tests/xml_tests.nv")
+    test.assert(c.line == 42)
+
+    test.case("a case's output is its own, and not the suite's")
+    test.assert_eq_str(c.system_out, "case out")
+    test.assert_eq_str(c.system_err, "case err")
+    match junitsuite.property_value(c.properties, "retries")
+        Some(v) => test.assert_eq_str(v, "2")
+        None    => test.fail("retries is a property of this case")
+
+    test.case("and a bare testcase root is a case like any other")
+    let one = xmltree.build("<testcase name=\"solo\" time=\"0.125\"/>")
+    match junitread.read_case(one, xmltree.root(one))
+        Ok(case)   => test.assert_eq_str(case.name, "solo")
+        Err(fault) => test.fail(fault.message())
+
+@test
+fn test_a_case_holding_two_outcome_elements_is_refused_not_guessed_at() [io]
+    test.case("the refusal names the case it happened on")
+    var source = "<testsuite name=\"xml_tests\">"
+    source = source + "<testcase name=\"rejects\"><failure message=\"a\" type=\"t\"/>"
+    source = source + "<skipped message=\"b\"/></testcase></testsuite>"
+    match junitread.read(source)
+        Ok(_)      => test.fail("a case carries one outcome")
+        Err(fault) =>
+            match fault
+                JunitTwoOutcomes(name) => test.assert_eq_str(name, "rejects")
+                _                      => test.fail("the fault names the case")
+
+    test.case("a suite whose time is not a number of seconds")
+    match junitread.read("<testsuite name=\"s\" time=\"soon\"/>")
+        Ok(_)      => test.fail("soon is not a number of seconds")
+        Err(fault) =>
+            match fault
+                JunitBadTime(element, text) =>
+                    test.assert(element == "testsuite")
+                    test.assert_eq_str(text, "soon")
+                _                           => test.fail("the fault names the element and the text")
+
+    test.case("and a case's time, which is read after the suite's")
+    match junitread.read("<testsuite name=\"s\"><testcase name=\"t\" time=\"soon\"/></testsuite>")
+        Ok(_)      => test.fail("soon is not a number of seconds")
+        Err(fault) =>
+            match fault
+                JunitBadTime(element, text) =>
+                    test.assert(element == "testcase")
+                    test.assert_eq_str(text, "soon")
+                _                           => test.fail("the fault names the element and the text")
+
+    test.case("and a suite's time, which is read by read_suite rather than off the root")
+    match junitread.read("<testsuites><testsuite name=\"s\" time=\"soon\"/></testsuites>")
+        Ok(_)      => test.fail("soon is not a number of seconds")
+        Err(fault) =>
+            match fault
+                JunitBadTime(element, text) =>
+                    test.assert(element == "testsuite")
+                    test.assert_eq_str(text, "soon")
+                _                           => test.fail("the fault names the element and the text")
+
+@test
+fn test_a_time_that_is_not_a_number_of_seconds_is_refused() [io]
+    test.case("a dot with no digit in front of it is not a number")
+    match junitread.parse_time(".5")
+        Some(_) => test.fail(".5 is not a number of seconds")
+        None    => test.assert(true)
+
+    test.case("and neither is a second dot")
+    match junitread.parse_time("1.2.3")
+        Some(_) => test.fail("1.2.3 is not a number of seconds")
+        None    => test.assert(true)
+
+    test.case("a count of seconds too large for a count of microseconds")
+    match junitread.parse_time("1234567890123.0")
+        Some(_) => test.fail("that many seconds does not fit a microsecond count")
+        None    => test.assert(true)

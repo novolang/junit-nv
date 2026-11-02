@@ -72,10 +72,15 @@ pub enum JunitFault
 // `Result<T, JunitFault>` exist at all (SPEC section 3.4).
 impl Error for JunitFault
     // The one-line message, naming what was found and where.
-    //
-    // Panics with `not implemented` until the bodies land.
     fn message(self) -> Str
-        todo("junit-nv.JunitFault.message")
+        match self
+            JunitNotXml(at, why)       => "the document is not well-formed XML at byte ${at}: ${why}"
+            JunitWrongRoot(found)      => "the root element is ${found}, not testsuites or testsuite"
+            JunitMissingAttr(el, attr) => "the ${el} has no ${attr} attribute"
+            JunitBadTime(on, text)     => "'${text}' is not a number of seconds on the ${on}"
+            JunitTwoOutcomes(name)     => "the testcase '${name}' carries two outcome elements"
+            JunitUnwritable(el, at, b) => "the ${el} holds character ${b} at byte ${at}, which XML 1.0 cannot carry"
+            JunitTimeTooPrecise(us, d) => "a duration of ${us} microseconds does not fit ${d} decimal places"
 
 // Whether this fault is in the report being WRITTEN rather than in a
 // report being read.
@@ -96,7 +101,10 @@ impl Error for JunitFault
 //     println("${juniterror.is_writer_fault(theirs)}")
 // ```
 pub fn is_writer_fault(f: JunitFault) -> Bool []
-    todo("junit-nv.juniterror.is_writer_fault")
+    match f
+        JunitUnwritable(_, _, _)  => true
+        JunitTimeTooPrecise(_, _) => true
+        _                         => false
 
 // A short stable code for a log or a metric label: `"not_xml"`,
 // `"wrong_root"`, `"unwritable"`, and so on.
@@ -112,7 +120,14 @@ pub fn is_writer_fault(f: JunitFault) -> Bool []
 //     println(juniterror.code(JunitWrongRoot("html")))
 // ```
 pub fn code(f: JunitFault) -> Str []
-    todo("junit-nv.juniterror.code")
+    match f
+        JunitNotXml(_, _)         => "not_xml"
+        JunitWrongRoot(_)         => "wrong_root"
+        JunitMissingAttr(_, _)    => "missing_attr"
+        JunitBadTime(_, _)        => "bad_time"
+        JunitTwoOutcomes(_)       => "two_outcomes"
+        JunitUnwritable(_, _, _)  => "unwritable"
+        JunitTimeTooPrecise(_, _) => "time_too_precise"
 
 // The byte offset the fault is about, or `-1` when it is not about a
 // position.
@@ -129,4 +144,7 @@ pub fn code(f: JunitFault) -> Str []
 //     println("${juniterror.offset(bad)}")
 // ```
 pub fn offset(f: JunitFault) -> Int []
-    todo("junit-nv.juniterror.offset")
+    match f
+        JunitNotXml(at, _)        => at
+        JunitUnwritable(_, at, _) => at
+        _                         => 0 - 1

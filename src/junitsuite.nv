@@ -218,7 +218,7 @@ pub struct JunitTotals
 //     println(junitsuite.property("branch", "main").value)
 // ```
 pub fn property(name: Str, value: Str) -> JunitProperty []
-    todo("junit-nv.junitsuite.property")
+    JunitProperty { name: name, value: value }
 
 // The value of the first property with this name, or `None`.
 //
@@ -235,7 +235,10 @@ pub fn property(name: Str, value: Str) -> JunitProperty []
 //         None    => println("not recorded")
 // ```
 pub fn property_value(properties: [JunitProperty], name: Str) -> ?Str []
-    todo("junit-nv.junitsuite.property_value")
+    for p in properties
+        if p.name == name
+            return Some(p.value)
+    None
 
 // A passing case with a name and a class name, no duration and no
 // output.
@@ -252,7 +255,8 @@ pub fn property_value(properties: [JunitProperty], name: Str) -> ?Str []
 //     println("${junitsuite.is_passed(c.outcome)}")
 // ```
 pub fn case(name: Str, classname: Str) -> JunitCase []
-    todo("junit-nv.junitsuite.case")
+    JunitCase { name: name, classname: classname, time_us: 0, outcome: JunitPassed,
+                system_out: "", system_err: "", file: "", line: 0, properties: [] }
 
 // The same case with a duration, in microseconds.
 //
@@ -264,7 +268,9 @@ pub fn case(name: Str, classname: Str) -> JunitCase []
 //     println("${c.time_us}")
 // ```
 pub fn with_time(c: JunitCase, time_us: Int) -> JunitCase []
-    todo("junit-nv.junitsuite.with_time")
+    JunitCase { name: c.name, classname: c.classname, time_us: time_us, outcome: c.outcome,
+                system_out: c.system_out, system_err: c.system_err, file: c.file,
+                line: c.line, properties: c.properties }
 
 // The same case with an outcome.
 //
@@ -277,7 +283,9 @@ pub fn with_time(c: JunitCase, time_us: Int) -> JunitCase []
 //     println(junitsuite.outcome_tag(c.outcome))
 // ```
 pub fn with_outcome(c: JunitCase, outcome: JunitOutcome) -> JunitCase []
-    todo("junit-nv.junitsuite.with_outcome")
+    JunitCase { name: c.name, classname: c.classname, time_us: c.time_us, outcome: outcome,
+                system_out: c.system_out, system_err: c.system_err, file: c.file,
+                line: c.line, properties: c.properties }
 
 // The same case with what the test printed on standard output.
 //
@@ -293,7 +301,9 @@ pub fn with_outcome(c: JunitCase, outcome: JunitOutcome) -> JunitCase []
 //     println(c.system_out)
 // ```
 pub fn with_system_out(c: JunitCase, text: Str) -> JunitCase []
-    todo("junit-nv.junitsuite.with_system_out")
+    JunitCase { name: c.name, classname: c.classname, time_us: c.time_us, outcome: c.outcome,
+                system_out: text, system_err: c.system_err, file: c.file,
+                line: c.line, properties: c.properties }
 
 // The same case with what the test printed on standard error.
 //
@@ -305,7 +315,9 @@ pub fn with_system_out(c: JunitCase, text: Str) -> JunitCase []
 //     println(c.system_err)
 // ```
 pub fn with_system_err(c: JunitCase, text: Str) -> JunitCase []
-    todo("junit-nv.junitsuite.with_system_err")
+    JunitCase { name: c.name, classname: c.classname, time_us: c.time_us, outcome: c.outcome,
+                system_out: c.system_out, system_err: text, file: c.file,
+                line: c.line, properties: c.properties }
 
 // The same case with the source file and line it is written at.
 //
@@ -317,7 +329,9 @@ pub fn with_system_err(c: JunitCase, text: Str) -> JunitCase []
 //     println("${c.line}")
 // ```
 pub fn at_source(c: JunitCase, file: Str, line: Int) -> JunitCase []
-    todo("junit-nv.junitsuite.at_source")
+    JunitCase { name: c.name, classname: c.classname, time_us: c.time_us, outcome: c.outcome,
+                system_out: c.system_out, system_err: c.system_err, file: file,
+                line: line, properties: c.properties }
 
 // The same case with property elements of its own.
 //
@@ -330,7 +344,9 @@ pub fn at_source(c: JunitCase, file: Str, line: Int) -> JunitCase []
 //     println("${list.len(c.properties)}")
 // ```
 pub fn with_case_properties(c: JunitCase, properties: [JunitProperty]) -> JunitCase []
-    todo("junit-nv.junitsuite.with_case_properties")
+    JunitCase { name: c.name, classname: c.classname, time_us: c.time_us, outcome: c.outcome,
+                system_out: c.system_out, system_err: c.system_err, file: c.file,
+                line: c.line, properties: properties }
 
 // An empty suite with a name: no cases, no properties, no timestamp.
 //
@@ -341,7 +357,8 @@ pub fn with_case_properties(c: JunitCase, properties: [JunitProperty]) -> JunitC
 //     println(junitsuite.suite("xml_tests").name)
 // ```
 pub fn suite(name: Str) -> JunitSuite []
-    todo("junit-nv.junitsuite.suite")
+    JunitSuite { name: name, package: "", timestamp: "", hostname: "", id: -1, time_us: 0,
+                 cases: [], properties: [], system_out: "", system_err: "" }
 
 // The same suite with its cases.
 //
@@ -354,7 +371,9 @@ pub fn suite(name: Str) -> JunitSuite []
 //     println("${list.len(s.cases)}")
 // ```
 pub fn with_cases(s: JunitSuite, cases: [JunitCase]) -> JunitSuite []
-    todo("junit-nv.junitsuite.with_cases")
+    JunitSuite { name: s.name, package: s.package, timestamp: s.timestamp,
+                 hostname: s.hostname, id: s.id, time_us: s.time_us, cases: cases,
+                 properties: s.properties, system_out: s.system_out, system_err: s.system_err }
 
 // The same suite with property elements: the environment a run
 // recorded.
@@ -368,7 +387,9 @@ pub fn with_cases(s: JunitSuite, cases: [JunitCase]) -> JunitSuite []
 //     println("${list.len(s.properties)}")
 // ```
 pub fn with_properties(s: JunitSuite, properties: [JunitProperty]) -> JunitSuite []
-    todo("junit-nv.junitsuite.with_properties")
+    JunitSuite { name: s.name, package: s.package, timestamp: s.timestamp,
+                 hostname: s.hostname, id: s.id, time_us: s.time_us, cases: s.cases,
+                 properties: properties, system_out: s.system_out, system_err: s.system_err }
 
 // The same suite with a duration for the whole suite, in microseconds.
 //
@@ -379,7 +400,25 @@ pub fn with_properties(s: JunitSuite, properties: [JunitProperty]) -> JunitSuite
 //     println("${junitsuite.with_suite_time(junitsuite.suite("s"), 90000).time_us}")
 // ```
 pub fn with_suite_time(s: JunitSuite, time_us: Int) -> JunitSuite []
-    todo("junit-nv.junitsuite.with_suite_time")
+    JunitSuite { name: s.name, package: s.package, timestamp: s.timestamp,
+                 hostname: s.hostname, id: s.id, time_us: time_us, cases: s.cases,
+                 properties: s.properties, system_out: s.system_out, system_err: s.system_err }
+
+// The same suite with an `id`: the suite's index within the document.
+//
+// `-1` is what `suite` starts with, and it is the value that means the
+// file did not say, so a caller with no index passes nothing.
+//
+// ```novo
+// use junitsuite
+//
+// fn main() [io]
+//     println("${junitsuite.with_id(junitsuite.suite("s"), 3).id}")
+// ```
+pub fn with_id(s: JunitSuite, id: Int) -> JunitSuite []
+    JunitSuite { name: s.name, package: s.package, timestamp: s.timestamp,
+                 hostname: s.hostname, id: id, time_us: s.time_us, cases: s.cases,
+                 properties: s.properties, system_out: s.system_out, system_err: s.system_err }
 
 // The same suite with a `timestamp` attribute.
 //
@@ -395,7 +434,9 @@ pub fn with_suite_time(s: JunitSuite, time_us: Int) -> JunitSuite []
 //     println(s.timestamp)
 // ```
 pub fn with_timestamp(s: JunitSuite, iso8601_local: Str) -> JunitSuite []
-    todo("junit-nv.junitsuite.with_timestamp")
+    JunitSuite { name: s.name, package: s.package, timestamp: iso8601_local,
+                 hostname: s.hostname, id: s.id, time_us: s.time_us, cases: s.cases,
+                 properties: s.properties, system_out: s.system_out, system_err: s.system_err }
 
 // The same suite with a `hostname` and a `package`.
 //
@@ -411,7 +452,9 @@ pub fn with_timestamp(s: JunitSuite, iso8601_local: Str) -> JunitSuite []
 //     println(s.hostname + " " + s.package)
 // ```
 pub fn with_origin(s: JunitSuite, hostname: Str, package: Str) -> JunitSuite []
-    todo("junit-nv.junitsuite.with_origin")
+    JunitSuite { name: s.name, package: package, timestamp: s.timestamp,
+                 hostname: hostname, id: s.id, time_us: s.time_us, cases: s.cases,
+                 properties: s.properties, system_out: s.system_out, system_err: s.system_err }
 
 // The same suite with the output the suite itself produced, outside
 // any case.
@@ -424,7 +467,9 @@ pub fn with_origin(s: JunitSuite, hostname: Str, package: Str) -> JunitSuite []
 //     println(s.system_out)
 // ```
 pub fn with_suite_output(s: JunitSuite, system_out: Str, system_err: Str) -> JunitSuite []
-    todo("junit-nv.junitsuite.with_suite_output")
+    JunitSuite { name: s.name, package: s.package, timestamp: s.timestamp,
+                 hostname: s.hostname, id: s.id, time_us: s.time_us, cases: s.cases,
+                 properties: s.properties, system_out: system_out, system_err: system_err }
 
 // A report from a list of suites.
 //
@@ -435,7 +480,7 @@ pub fn with_suite_output(s: JunitSuite, system_out: Str, system_err: Str) -> Jun
 //     println("${list.len(junitsuite.report([]).suites)}")
 // ```
 pub fn report(suites: [JunitSuite]) -> JunitReport []
-    todo("junit-nv.junitsuite.report")
+    JunitReport { name: "", suites: suites, time_us: 0 }
 
 // The same report with a name and a duration for the whole run.
 //
@@ -447,7 +492,39 @@ pub fn report(suites: [JunitSuite]) -> JunitReport []
 //     println(r.name)
 // ```
 pub fn with_run(r: JunitReport, name: Str, time_us: Int) -> JunitReport []
-    todo("junit-nv.junitsuite.with_run")
+    JunitReport { name: name, suites: r.suites, time_us: time_us }
+
+// The counts over one list of cases: one arithmetic, used by
+// `suite_totals` for a suite and by `totals_of` for a whole report, so
+// the two can never disagree.
+fn totals_of_cases(cases: [JunitCase]) -> JunitTotals
+    var tests = 0
+    var failures = 0
+    var errors = 0
+    var skipped = 0
+    var us = 0
+    for c in cases
+        tests += 1
+        us += c.time_us
+        match c.outcome
+            JunitFailure(_, _, _) =>
+                failures += 1
+            JunitErrored(_, _, _) =>
+                errors += 1
+            JunitSkipped(_)       =>
+                skipped += 1
+            JunitPassed           => ()
+    JunitTotals { tests: tests, failures: failures, errors: errors, skipped: skipped,
+                  passed: tests - failures - errors - skipped, time_us: us }
+
+// One totals added to another, field by field.
+fn totals_added(a: JunitTotals, b: JunitTotals) -> JunitTotals
+    JunitTotals { tests: a.tests + b.tests,
+                  failures: a.failures + b.failures,
+                  errors: a.errors + b.errors,
+                  skipped: a.skipped + b.skipped,
+                  passed: a.passed + b.passed,
+                  time_us: a.time_us + b.time_us }
 
 // The counts over one suite, computed from its cases.
 //
@@ -458,7 +535,7 @@ pub fn with_run(r: JunitReport, name: Str, time_us: Int) -> JunitReport []
 //     println("${junitsuite.suite_totals(junitsuite.suite("s")).tests}")
 // ```
 pub fn suite_totals(s: JunitSuite) -> JunitTotals []
-    todo("junit-nv.junitsuite.suite_totals")
+    totals_of_cases(s.cases)
 
 // The counts over a whole report, computed from every case in it.
 //
@@ -473,7 +550,10 @@ pub fn suite_totals(s: JunitSuite) -> JunitTotals []
 //     println("${junitsuite.totals_of(junitsuite.report([])).failures}")
 // ```
 pub fn totals_of(r: JunitReport) -> JunitTotals []
-    todo("junit-nv.junitsuite.totals_of")
+    var total = totals_of_cases([])
+    for s in r.suites
+        total = totals_added(total, suite_totals(s))
+    total
 
 // Whether a run counts as green: no failures and no errors.
 //
@@ -488,7 +568,8 @@ pub fn totals_of(r: JunitReport) -> JunitTotals []
 //     println("${junitsuite.is_green(junitsuite.report([]))}")
 // ```
 pub fn is_green(r: JunitReport) -> Bool []
-    todo("junit-nv.junitsuite.is_green")
+    let t = totals_of(r)
+    t.failures == 0 and t.errors == 0
 
 // Whether an outcome is a pass.
 //
@@ -499,7 +580,9 @@ pub fn is_green(r: JunitReport) -> Bool []
 //     println("${junitsuite.is_passed(JunitPassed)}")
 // ```
 pub fn is_passed(o: JunitOutcome) -> Bool []
-    todo("junit-nv.junitsuite.is_passed")
+    match o
+        JunitPassed => true
+        _           => false
 
 // Whether an outcome is a failed assertion — a `failure` element, not
 // an `error` one.
@@ -512,7 +595,9 @@ pub fn is_passed(o: JunitOutcome) -> Bool []
 //     println("${junitsuite.is_failure(o)}")
 // ```
 pub fn is_failure(o: JunitOutcome) -> Bool []
-    todo("junit-nv.junitsuite.is_failure")
+    match o
+        JunitFailure(_, _, _) => true
+        _                     => false
 
 // Whether an outcome is a test that did not finish — an `error`
 // element.
@@ -525,7 +610,9 @@ pub fn is_failure(o: JunitOutcome) -> Bool []
 //     println("${junitsuite.is_errored(o)}")
 // ```
 pub fn is_errored(o: JunitOutcome) -> Bool []
-    todo("junit-nv.junitsuite.is_errored")
+    match o
+        JunitErrored(_, _, _) => true
+        _                     => false
 
 // Whether an outcome is a test that did not run.
 //
@@ -536,7 +623,9 @@ pub fn is_errored(o: JunitOutcome) -> Bool []
 //     println("${junitsuite.is_skipped(JunitSkipped(""))}")
 // ```
 pub fn is_skipped(o: JunitOutcome) -> Bool []
-    todo("junit-nv.junitsuite.is_skipped")
+    match o
+        JunitSkipped(_) => true
+        _               => false
 
 // The element name an outcome is written as: `"failure"`, `"error"`,
 // `"skipped"`, or `""` for a pass.
@@ -550,7 +639,11 @@ pub fn is_skipped(o: JunitOutcome) -> Bool []
 //     println(junitsuite.outcome_tag(JunitSkipped("")))
 // ```
 pub fn outcome_tag(o: JunitOutcome) -> Str []
-    todo("junit-nv.junitsuite.outcome_tag")
+    match o
+        JunitPassed           => ""
+        JunitFailure(_, _, _) => "failure"
+        JunitErrored(_, _, _) => "error"
+        JunitSkipped(_)       => "skipped"
 
 // The `message` attribute an outcome carries, or `""`.
 //
@@ -562,7 +655,19 @@ pub fn outcome_tag(o: JunitOutcome) -> Str []
 //     println(junitsuite.outcome_message(o))
 // ```
 pub fn outcome_message(o: JunitOutcome) -> Str []
-    todo("junit-nv.junitsuite.outcome_message")
+    match o
+        JunitPassed             => ""
+        JunitFailure(msg, _, _) => msg
+        JunitErrored(msg, _, _) => msg
+        JunitSkipped(msg)       => msg
+
+// Whether the byte at `i` of a timestamp is one of the ten digits.
+//
+// A miss answers the largest byte value, so a caller that indexed past
+// the end of the text gets `false` rather than a digit.
+fn timestamp_char_ok(i: Int, text: Str) -> Bool
+    let b = str.byte_at_or(text, i, 0)
+    b >= 48 and b <= 57
 
 // Whether a timestamp has the shape the `timestamp` attribute wants:
 // `YYYY-MM-DDThh:mm:ss`, with no time zone.
@@ -580,4 +685,15 @@ pub fn outcome_message(o: JunitOutcome) -> Str []
 //     println("${junitsuite.is_timestamp_shaped("Wed Sep 17 09:41:00 2026")}")
 // ```
 pub fn is_timestamp_shaped(text: Str) -> Bool []
-    todo("junit-nv.junitsuite.is_timestamp_shaped")
+    str.len(text) == 19 and timestamp_char_ok(0, text) and timestamp_char_ok(1, text)
+        and timestamp_char_ok(2, text) and timestamp_char_ok(3, text)
+        and str.byte_at_or(text, 4, 0) == 45
+        and timestamp_char_ok(5, text) and timestamp_char_ok(6, text)
+        and str.byte_at_or(text, 7, 0) == 45
+        and timestamp_char_ok(8, text) and timestamp_char_ok(9, text)
+        and str.byte_at_or(text, 10, 0) == 84
+        and timestamp_char_ok(11, text) and timestamp_char_ok(12, text)
+        and str.byte_at_or(text, 13, 0) == 58
+        and timestamp_char_ok(14, text) and timestamp_char_ok(15, text)
+        and str.byte_at_or(text, 16, 0) == 58
+        and timestamp_char_ok(17, text) and timestamp_char_ok(18, text)

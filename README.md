@@ -9,12 +9,6 @@ writers produce. The closest thing to a reference is the
 which this package follows. It reads such a file into typed values and
 writes one back.
 
-**Status: NOT IMPLEMENTED — interface only.** Every function is
-declared with its full signature, but every body is a `todo()` that
-panics when called. The package is published so its design can be
-reviewed and depended on before it is implemented. Version 0.1.0 will
-be the first working release.
-
 ## What a JUnit report is
 
 A report is an XML document. Its root element is either `testsuites`,
@@ -93,10 +87,10 @@ fn main() [io]
         Err(fault)   => println("cannot write the report: ${fault.message()}")
 ```
 
-Build and test with `novo pkg build` and `novo test`. Today `novo test`
-fails on purpose: every test reaches a
-`not implemented: junit-nv.<module>.<fn>` panic. The tests are the
-specification the implementation will have to satisfy.
+Build and test with `novo pkg build` and `novo test`. The four suites
+in `tests/` are the oracle this implementation was written against,
+and `novo test src/<module>.nv` runs the example in each public doc
+comment.
 
 ## What the package contains
 
@@ -232,6 +226,7 @@ novo test tests/junitsuite_tests.nv   # the values, the counts and the outcomes
 novo test tests/junitread_tests.nv    # what the reader tolerates and refuses
 novo test tests/junitwrite_tests.nv   # what the writer refuses, and the durations
 novo test tests/juniterror_tests.nv   # which side of the pipe a fault is on
+novo test tests/junitwrite_edge_tests.nv  # the whole document, and what the four suites leave
 ```
 
 The reference documents are the Jenkins JUnit plugin's schema for the
@@ -245,28 +240,15 @@ control character is refused and named with its offset, that a bare
 `testsuite` root reads into a report with one suite, and that a
 `testcase` with no `name` is refused.
 
-The tests compile today and fail at run, each on the
-`not implemented: junit-nv.<module>.<fn>` panic that is its body. That
-is the expected state of an interface release. They turn green one at a
-time as bodies land.
-
-## Implementation status
-
-| Item | Implemented |
-| --- | --- |
-| `junitsuite.JunitReport`, `.JunitSuite`, `.JunitCase`, `.JunitOutcome`, `.JunitProperty`, `.JunitTotals` | the types are declared |
-| `junitsuite.property`, `.property_value` | no |
-| `junitsuite.case`, `.with_time`, `.with_outcome`, `.with_system_out`, `.with_system_err`, `.at_source`, `.with_case_properties` | no |
-| `junitsuite.suite`, `.with_cases`, `.with_properties`, `.with_suite_time`, `.with_timestamp`, `.with_origin`, `.with_suite_output` | no |
-| `junitsuite.report`, `.with_run` | no |
-| `junitsuite.suite_totals`, `.totals_of`, `.is_green` | no |
-| `junitsuite.is_passed`, `.is_failure`, `.is_errored`, `.is_skipped`, `.outcome_tag`, `.outcome_message`, `.is_timestamp_shaped` | no |
-| `junitread.read`, `.read_document`, `.read_suite`, `.read_case` | no |
-| `junitread.root_kind`, `.is_junit`, `.parse_time`, `.case_nodes`, `.suite_nodes` | no |
-| `junitwrite.options`, `.compact`, `.bare_suite`, `.with_time_decimals`, `.without_output` | no |
-| `junitwrite.write_report`, `.write_suite`, `.write_open`, `.write_close`, `.to_str` | no |
-| `junitwrite.sanitize_text`, `.first_unwritable`, `.format_time` | no |
-| `juniterror.is_writer_fault`, `.code`, `.offset`, `JunitFault.message` | no |
+`tests/junitwrite_edge_tests.nv` adds what the four suites leave to the
+whole document: that the written counts agree with the cases and the
+root's counts with the sum of its suites, that the four case shapes
+read back as the four outcomes, that a failure's text survives a round
+trip through the escaping, and that a `timestamp` and a `time` are
+written as the exact text they are. It also covers the fields a writer
+emits only when a caller set them, the element the writer names when it
+refuses a character, and the attributes the reader fills from reports
+this writer never emits.
 
 ## Licence
 

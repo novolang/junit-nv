@@ -1,10 +1,8 @@
 // junitwrite_tests.nv — what the writer refuses, and what it computes.
 //
-// RED ON PURPOSE: every assertion reaches `not implemented:
-// junit-nv.junitwrite.<fn>`.  What is asserted is that a character XML
-// cannot carry is refused rather than emitted, that losing one is a
-// separate call, and that a duration is rendered to the places the
-// caller asked for.
+// What is asserted is that a character XML cannot carry is refused
+// rather than emitted, that losing one is a separate call, and that a
+// duration is rendered to the places the caller asked for.
 
 use std.test
 use junitsuite

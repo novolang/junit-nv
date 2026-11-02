@@ -1,15 +1,13 @@
 [package]
 name        = "junit-nv"
-version     = "0.0.2"
+version     = "0.1.0"
 description = "JUnit XML, the report format every CI reads: the de-facto schema as typed values — testsuites and testsuite, testcase with one outcome, failure, error and skipped, properties, system-out and system-err, timestamps and durations — read from a document and written into a caller's buffer, with the characters XML 1.0 cannot carry refused rather than embedded."
 license     = "Apache-2.0"
 
-# An INTERFACE release: every `pub fn` body is a `todo()`, so the
-# signatures and the effect rows are published and nothing is
-# implemented.  `novo pkg publish` recognises the shape and requires
-# both the draft stability and the 0.0.x version; the first
-# implementation is the 0.1.0 published over it.
-stability   = "draft"
+# `experimental` because no program outside this package has used the
+# surface yet, and the tests were written against the signatures rather
+# than by a consumer.
+stability   = "experimental"
 
 # `core`.  A report is a value built from durations and text the caller
 # already holds, and writing one appends to the caller's buffer.  No
@@ -24,7 +22,10 @@ category    = "tooling"
 tags        = ["junit", "junit-xml", "test-report", "ci", "surefire", "testsuite", "xml", "tooling"]
 repository  = "https://github.com/novolang/junit-nv"
 maintainers = ["novo-lang"]
-novo        = ">= 0.9.0"
+# Built, tested and measured on 0.20.2.  The floor is the toolchain the
+# release was checked against rather than the oldest one that might
+# work.
+novo        = ">= 0.20.2"
 
 # A library: no `main`, so `novo pkg build` type-checks and
 # effect-checks every module under `src/` and writes no binary.
@@ -41,7 +42,11 @@ novo        = ">= 0.9.0"
 # spellings no schema mentions.  Writing needs the ESCAPING, which is
 # where a minimal writer goes wrong: a `system-out` element carries
 # whatever a test printed, and a test prints control characters.
-# `xmlwrite.write_text` refuses what it cannot escape instead of
-# emitting a document no parser will read back, and that refusal is the
-# property this package's writer is built on.
-xml-nv = "^0.1.0"
+# `xmlwrite.write_text` and `xmlwrite.write_attr_value` escape what
+# character data and an attribute value need escaped, and they escape
+# rather than refuse, so the refusal is this package's own:
+# `junitwrite.first_unwritable` finds the first character XML 1.0
+# section 2.2 does not admit, and the writer answers `JunitUnwritable`
+# with its offset rather than emitting a document no parser will read
+# back.
+xml-nv = "^0.1.1"

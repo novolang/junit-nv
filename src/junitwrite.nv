@@ -32,6 +32,8 @@
 
 use junitsuite
 use juniterror
+use xmlparse
+use xmlwrite
 
 // How a document is laid out and how much of it is written.
 //
@@ -75,7 +77,8 @@ pub struct JunitWriteOptions
 //     println("${junitwrite.options().time_decimals}")
 // ```
 pub fn options() -> JunitWriteOptions []
-    todo("junit-nv.junitwrite.options")
+    JunitWriteOptions { indent: 2, declaration: true, time_decimals: 3,
+                        bare_root: false, output_elements: true }
 
 // The smallest document that says the same thing: no indent, no
 // declaration, no output elements.
@@ -89,7 +92,8 @@ pub fn options() -> JunitWriteOptions []
 //     println("${junitwrite.compact().indent}")
 // ```
 pub fn compact() -> JunitWriteOptions []
-    todo("junit-nv.junitwrite.compact")
+    JunitWriteOptions { indent: 0, declaration: false, time_decimals: 3,
+                        bare_root: false, output_elements: false }
 
 // The same options with a bare `<testsuite>` root for a
 // one-suite report.
@@ -101,7 +105,9 @@ pub fn compact() -> JunitWriteOptions []
 //     println("${junitwrite.bare_suite(junitwrite.options()).bare_root}")
 // ```
 pub fn bare_suite(o: JunitWriteOptions) -> JunitWriteOptions []
-    todo("junit-nv.junitwrite.bare_suite")
+    JunitWriteOptions { indent: o.indent, declaration: o.declaration,
+                        time_decimals: o.time_decimals, bare_root: true,
+                        output_elements: o.output_elements }
 
 // The same options with a different number of decimal places on a
 // duration.
@@ -114,7 +120,9 @@ pub fn bare_suite(o: JunitWriteOptions) -> JunitWriteOptions []
 //     println("${o.time_decimals}")
 // ```
 pub fn with_time_decimals(o: JunitWriteOptions, decimals: Int) -> JunitWriteOptions []
-    todo("junit-nv.junitwrite.with_time_decimals")
+    JunitWriteOptions { indent: o.indent, declaration: o.declaration,
+                        time_decimals: decimals, bare_root: o.bare_root,
+                        output_elements: o.output_elements }
 
 // The same options with the `system-out` and `system-err` elements
 // left out.
@@ -126,7 +134,332 @@ pub fn with_time_decimals(o: JunitWriteOptions, decimals: Int) -> JunitWriteOpti
 //     println("${junitwrite.without_output(junitwrite.options()).output_elements}")
 // ```
 pub fn without_output(o: JunitWriteOptions) -> JunitWriteOptions []
-    todo("junit-nv.junitwrite.without_output")
+    JunitWriteOptions { indent: o.indent, declaration: o.declaration,
+                        time_decimals: o.time_decimals, bare_root: o.bare_root,
+                        output_elements: false }
+
+// One attribute, before it is escaped: the name and the value.
+struct Attr
+    name: Str
+    value: Str
+
+// The bytes of `s` onto the end of `out`.
+fn put_text(var out: [u8], s: Str) -> [u8]
+    list.append(out, bytes.to_byte_list(bytes.from_str(s)))
+    out
+
+// The indentation of a nesting level, or nothing in a compact document.
+fn put_indent(var out: [u8], level: Int, o: JunitWriteOptions) -> [u8]
+    if o.indent == 0
+        return out
+    put_text(var out, str.repeat(" ", level * o.indent))
+
+// The line feed that ends a written line, or nothing when compact.
+fn put_eol(var out: [u8], o: JunitWriteOptions) -> [u8]
+    if o.indent == 0
+        return out
+    put_text(var out, "\n")
+
+// ` name="value"`, with the value escaped for the quote around it.
+fn put_attr(var out: [u8], a: Attr) -> [u8]
+    put_text(var out, " " + a.name + "=\"")
+    xmlwrite.write_attr_value(var out, a.value, 34)
+    put_text(var out, "\"")
+
+// A start tag on its own line: `<a b="1">` and a line feed.
+fn put_open_tag(var out: [u8], level: Int, tag: Str, attrs: [Attr], o: JunitWriteOptions) -> [u8]
+    put_indent(var out, level, o)
+    put_text(var out, "<" + tag)
+    for a in attrs
+        put_attr(var out, a)
+    put_text(var out, ">")
+    put_eol(var out, o)
+
+// An empty tag on its own line: `<a b="1"/>` and a line feed.
+fn put_empty_tag(var out: [u8], level: Int, tag: Str, attrs: [Attr], o: JunitWriteOptions) -> [u8]
+    put_indent(var out, level, o)
+    put_text(var out, "<" + tag)
+    for a in attrs
+        put_attr(var out, a)
+    put_text(var out, "/>")
+    put_eol(var out, o)
+
+// An element holding one text, on one line: `<a>text</a>`.
+//
+// The text is written as it is, newlines and all, and nothing is
+// indented inside it: whitespace in character data is content, and a
+// stack trace written with an indent in front of every line is a stack
+// trace a reader shows differently from the one the test printed.
+fn put_text_element(var out: [u8], level: Int, tag: Str, attrs: [Attr], text: Str,
+                    o: JunitWriteOptions) -> [u8]
+    if text == ""
+        return put_empty_tag(var out, level, tag, attrs, o)
+    put_indent(var out, level, o)
+    put_text(var out, "<" + tag)
+    for a in attrs
+        put_attr(var out, a)
+    put_text(var out, ">")
+    xmlwrite.write_text(var out, text)
+    put_text(var out, "</" + tag + ">")
+    put_eol(var out, o)
+
+// An end tag on its own line, indented.
+fn put_close_tag(var out: [u8], level: Int, tag: Str, o: JunitWriteOptions) -> [u8]
+    put_indent(var out, level, o)
+    put_text(var out, "</" + tag + ">")
+    put_eol(var out, o)
+
+// `JunitUnwritable` for the first character of `text` XML 1.0 cannot
+// carry, or `None`.
+fn text_fault(element: Str, text: Str) -> ?juniterror.JunitFault
+    let at = first_unwritable(text)
+    if at == 0 - 1
+        return None
+    Some(JunitUnwritable(element, at, str.byte_at_or(text, at, 0)))
+
+// `JunitTimeTooPrecise` when a duration does not fit the decimal places
+// the options ask for, or `None`.
+fn duration_fault(time_us: Int, o: JunitWriteOptions) -> ?juniterror.JunitFault
+    match format_time(time_us, o.time_decimals)
+        Some(_) => None
+        None    => Some(JunitTimeTooPrecise(time_us, o.time_decimals))
+
+// The fault a suite's or a case's property list would be written with.
+fn property_faults(ps: [junitsuite.JunitProperty]) -> ?juniterror.JunitFault
+    for p in ps
+        if let Some(f) = text_fault("property", p.name)
+            return Some(f)
+        if let Some(f) = text_fault("property", p.value)
+            return Some(f)
+    None
+
+// The fault one outcome element's message, type and text would be
+// written with.
+fn outcome_text_fault(tag: Str, msg: Str, kind: Str, text: Str) -> ?juniterror.JunitFault
+    if let Some(f) = text_fault(tag, msg)
+        return Some(f)
+    if let Some(f) = text_fault(tag, kind)
+        return Some(f)
+    text_fault(tag, text)
+
+// The fault a case's outcome element would be written with.
+fn outcome_fault(outcome: junitsuite.JunitOutcome) -> ?juniterror.JunitFault
+    match outcome
+        JunitPassed             => None
+        JunitFailure(msg, k, t) => outcome_text_fault("failure", msg, k, t)
+        JunitErrored(msg, k, t) => outcome_text_fault("error", msg, k, t)
+        JunitSkipped(msg)       => text_fault("skipped", msg)
+
+// The fault one case would be written with, in document order.  The
+// output elements are checked only when the options write them, because
+// text that is not written is not a document that fails to parse.
+fn case_fault(c: junitsuite.JunitCase, o: JunitWriteOptions) -> ?juniterror.JunitFault
+    if let Some(f) = text_fault("testcase", c.name)
+        return Some(f)
+    if let Some(f) = text_fault("testcase", c.classname)
+        return Some(f)
+    if let Some(f) = text_fault("testcase", c.file)
+        return Some(f)
+    if let Some(f) = duration_fault(c.time_us, o)
+        return Some(f)
+    if let Some(f) = property_faults(c.properties)
+        return Some(f)
+    if let Some(f) = outcome_fault(c.outcome)
+        return Some(f)
+    if o.output_elements
+        if let Some(f) = text_fault("system-out", c.system_out)
+            return Some(f)
+        if let Some(f) = text_fault("system-err", c.system_err)
+            return Some(f)
+    None
+
+// The fault a list of cases would be written with.
+fn cases_fault(cs: [junitsuite.JunitCase], o: JunitWriteOptions) -> ?juniterror.JunitFault
+    for c in cs
+        if let Some(f) = case_fault(c, o)
+            return Some(f)
+    None
+
+// The fault one suite would be written with, in document order.
+fn suite_fault(s: junitsuite.JunitSuite, o: JunitWriteOptions) -> ?juniterror.JunitFault
+    if let Some(f) = text_fault("testsuite", s.name)
+        return Some(f)
+    if let Some(f) = text_fault("testsuite", s.package)
+        return Some(f)
+    if let Some(f) = text_fault("testsuite", s.timestamp)
+        return Some(f)
+    if let Some(f) = text_fault("testsuite", s.hostname)
+        return Some(f)
+    if let Some(f) = duration_fault(s.time_us, o)
+        return Some(f)
+    if let Some(f) = property_faults(s.properties)
+        return Some(f)
+    if let Some(f) = cases_fault(s.cases, o)
+        return Some(f)
+    if o.output_elements
+        if let Some(f) = text_fault("system-out", s.system_out)
+            return Some(f)
+        if let Some(f) = text_fault("system-err", s.system_err)
+            return Some(f)
+    None
+
+// The fault a whole report would be written with, in document order:
+// the first text in the document XML 1.0 cannot carry, or the first
+// duration that does not fit.
+fn report_fault(r: junitsuite.JunitReport, o: JunitWriteOptions) -> ?juniterror.JunitFault
+    if let Some(f) = text_fault("testsuites", r.name)
+        return Some(f)
+    if let Some(f) = duration_fault(r.time_us, o)
+        return Some(f)
+    for s in r.suites
+        if let Some(f) = suite_fault(s, o)
+            return Some(f)
+    None
+
+// `attrs` with one more attribute, left out when the value is empty.
+//
+// An attribute a caller never set is absent from the document rather
+// than written empty, which is what makes a report read and written
+// again carry the attributes it carried.
+fn push_attr(var attrs: [Attr], name: Str, value: Str) -> [Attr]
+    if value == ""
+        return attrs
+    list.push(attrs, Attr { name: name, value: value })
+    attrs
+
+// `attrs` with the four counts, which are written even at zero.
+fn push_counts(var attrs: [Attr], t: junitsuite.JunitTotals) -> [Attr]
+    list.push(attrs, Attr { name: "tests", value: str.from_int(t.tests) })
+    list.push(attrs, Attr { name: "failures", value: str.from_int(t.failures) })
+    list.push(attrs, Attr { name: "errors", value: str.from_int(t.errors) })
+    list.push(attrs, Attr { name: "skipped", value: str.from_int(t.skipped) })
+    attrs
+
+// A duration as the `time` attribute writes it.  `duration_fault` has
+// already refused a duration that does not fit, so the fallback is
+// unreachable: it writes a zero rather than a rounded number.
+//
+// Spelled with `match` rather than `?? "0"`: a `??` whose receiver is a
+// call and whose fallback is a literal hands a `.rodata`-backed `Str` to
+// its caller, which `novo_dup_rc_v` then writes a refcount into when the
+// entry call sits in another package, which `attr_text` in `junitread.nv`
+// avoids the same way.
+fn time_text(time_us: Int, o: JunitWriteOptions) -> Str
+    match format_time(time_us, o.time_decimals)
+        Some(text) => text
+        // cov: skip — every caller reaches here through a `duration_fault` that refused a duration this cannot render, before any attribute is written
+        None       => "0"
+
+// The `testsuites` attributes: the run's name when it has one, the
+// counts over every suite under it, and how long the run took.
+fn root_attrs(name: Str, t: junitsuite.JunitTotals, time_us: Int, o: JunitWriteOptions) -> [Attr]
+    var attrs: [Attr] = []
+    push_attr(var attrs, "name", name)
+    push_counts(var attrs, t)
+    push_attr(var attrs, "time", time_text(time_us, o))
+    attrs
+
+// The `testsuite` attributes: where and when it ran, the counts over
+// its cases, and the duration it recorded.
+fn suite_attrs(s: junitsuite.JunitSuite, o: JunitWriteOptions) -> [Attr]
+    var attrs: [Attr] = [Attr { name: "name", value: s.name }]
+    push_attr(var attrs, "package", s.package)
+    push_attr(var attrs, "timestamp", s.timestamp)
+    push_attr(var attrs, "hostname", s.hostname)
+    if s.id >= 0
+        push_attr(var attrs, "id", str.from_int(s.id))
+    push_counts(var attrs, junitsuite.suite_totals(s))
+    push_attr(var attrs, "time", time_text(s.time_us, o))
+    attrs
+
+// The attributes of a `property` element.
+fn property_attrs(p: junitsuite.JunitProperty) -> [Attr]
+    [Attr { name: "name", value: p.name }, Attr { name: "value", value: p.value }]
+
+// The `testcase` attributes: what it is called, where it is written,
+// and how long it took.
+fn case_attrs(c: junitsuite.JunitCase, o: JunitWriteOptions) -> [Attr]
+    var attrs: [Attr] = [Attr { name: "name", value: c.name }]
+    push_attr(var attrs, "classname", c.classname)
+    push_attr(var attrs, "file", c.file)
+    if c.line > 0
+        push_attr(var attrs, "line", str.from_int(c.line))
+    push_attr(var attrs, "time", time_text(c.time_us, o))
+    attrs
+
+// The `message` and `type` attributes of a `failure` or an `error`.
+fn outcome_attrs(msg: Str, kind: Str) -> [Attr]
+    var attrs: [Attr] = []
+    push_attr(var attrs, "message", msg)
+    push_attr(var attrs, "type", kind)
+    attrs
+
+// The `properties` element, when there are any properties.
+fn put_properties(var out: [u8], level: Int, ps: [junitsuite.JunitProperty],
+                  o: JunitWriteOptions) -> [u8]
+    if list.len(ps) == 0
+        return out
+    put_open_tag(var out, level, "properties", [], o)
+    for p in ps
+        put_empty_tag(var out, level + 1, "property", property_attrs(p), o)
+    put_close_tag(var out, level, "properties", o)
+
+// The outcome element of a case, or nothing at all for a pass.
+fn put_outcome(var out: [u8], level: Int, outcome: junitsuite.JunitOutcome,
+               o: JunitWriteOptions) -> [u8]
+    match outcome
+        JunitPassed             => out
+        JunitFailure(msg, k, t) => put_text_element(var out, level, "failure", outcome_attrs(msg, k), t, o)
+        JunitErrored(msg, k, t) => put_text_element(var out, level, "error", outcome_attrs(msg, k), t, o)
+        JunitSkipped(msg)       => put_empty_tag(var out, level, "skipped", outcome_attrs(msg, ""), o)
+
+// The `system-out` and the `system-err` element, when there is anything
+// in them.
+fn put_output(var out: [u8], level: Int, out_text: Str, err_text: Str, o: JunitWriteOptions) -> [u8]
+    if out_text != ""
+        put_text_element(var out, level, "system-out", [], out_text, o)
+    if err_text != ""
+        put_text_element(var out, level, "system-err", [], err_text, o)
+    out
+
+// One `testcase` element and the elements under it.
+fn put_case(var out: [u8], c: junitsuite.JunitCase, o: JunitWriteOptions, level: Int) -> [u8]
+    put_open_tag(var out, level, "testcase", case_attrs(c, o), o)
+    put_properties(var out, level + 1, c.properties, o)
+    put_outcome(var out, level + 1, c.outcome, o)
+    if o.output_elements
+        put_output(var out, level + 1, c.system_out, c.system_err, o)
+    put_close_tag(var out, level, "testcase", o)
+
+// One `testsuite` element and everything under it.
+fn put_suite(var out: [u8], s: junitsuite.JunitSuite, o: JunitWriteOptions, level: Int) -> [u8]
+    put_open_tag(var out, level, "testsuite", suite_attrs(s, o), o)
+    put_properties(var out, level + 1, s.properties, o)
+    for c in s.cases
+        put_case(var out, c, o, level + 1)
+    if o.output_elements
+        put_output(var out, level + 1, s.system_out, s.system_err, o)
+    put_close_tag(var out, level, "testsuite", o)
+
+// The bytes of a whole document, refused texts aside.
+//
+// A one-suite report written with `bare_root` is a bare `testsuite`
+// root, and one holding several suites is a `testsuites` wrapper
+// whatever the option says: there is no bare shape for two suites.
+fn report_bytes(r: junitsuite.JunitReport, o: JunitWriteOptions) -> [u8]
+    var out: [u8] = []
+    if o.declaration
+        xmlwrite.write_declaration(var out, None)
+        put_eol(var out, o)
+    if o.bare_root and list.len(r.suites) == 1
+        for s in r.suites
+            put_suite(var out, s, o, 0)
+    else
+        put_open_tag(var out, 0, "testsuites", root_attrs(r.name, junitsuite.totals_of(r), r.time_us, o), o)
+        for s in r.suites
+            put_suite(var out, s, o, 1)
+        put_close_tag(var out, 0, "testsuites", o)
+    out
 
 // The whole report, appended to `out`.
 //
@@ -135,6 +468,11 @@ pub fn without_output(o: JunitWriteOptions) -> JunitWriteOptions []
 // character XML 1.0 cannot carry, naming the element and the offset,
 // and nothing is appended in that case — a caller retries with
 // sanitised text rather than trimming a half-written document.
+//
+// The answer is `out` with the document after it.  `out` is a plain
+// `[u8]` rather than a `var`, as the interface published it, so the
+// append copies what was already in the buffer: a caller appending
+// report after report to one buffer is copying it once per report.
 //
 // ```novo
 // use junitsuite
@@ -148,7 +486,9 @@ pub fn without_output(o: JunitWriteOptions) -> JunitWriteOptions []
 // ```
 pub fn write_report(out: [u8], r: junitsuite.JunitReport,
                     o: JunitWriteOptions) -> Result<[u8], juniterror.JunitFault> []
-    todo("junit-nv.junitwrite.write_report")
+    if let Some(f) = report_fault(r, o)
+        return Err(f)
+    Ok(list.concat(out, report_bytes(r, o)))
 
 // One suite as a `<testsuite>` element, appended to `out`.
 //
@@ -168,7 +508,11 @@ pub fn write_report(out: [u8], r: junitsuite.JunitReport,
 // ```
 pub fn write_suite(out: [u8], s: junitsuite.JunitSuite,
                    o: JunitWriteOptions) -> Result<[u8], juniterror.JunitFault> []
-    todo("junit-nv.junitwrite.write_suite")
+    if let Some(f) = suite_fault(s, o)
+        return Err(f)
+    var buf: [u8] = []
+    put_suite(var buf, s, o, 1)
+    Ok(list.concat(out, buf))
 
 // The declaration and the `<testsuites>` open tag, with the counts the
 // caller supplies.
@@ -191,7 +535,16 @@ pub fn write_suite(out: [u8], s: junitsuite.JunitSuite,
 // ```
 pub fn write_open(out: [u8], name: Str, totals: junitsuite.JunitTotals,
                   o: JunitWriteOptions) -> Result<[u8], juniterror.JunitFault> []
-    todo("junit-nv.junitwrite.write_open")
+    if let Some(f) = text_fault("testsuites", name)
+        return Err(f)
+    if let Some(f) = duration_fault(totals.time_us, o)
+        return Err(f)
+    var buf: [u8] = []
+    if o.declaration
+        xmlwrite.write_declaration(var buf, None)
+        put_eol(var buf, o)
+    put_open_tag(var buf, 0, "testsuites", root_attrs(name, totals, totals.time_us, o), o)
+    Ok(list.concat(out, buf))
 
 // The `</testsuites>` close tag.
 //
@@ -202,7 +555,9 @@ pub fn write_open(out: [u8], name: Str, totals: junitsuite.JunitTotals,
 //     println("${list.len(junitwrite.write_close([], junitwrite.options()))}")
 // ```
 pub fn write_close(out: [u8], o: JunitWriteOptions) -> [u8] []
-    todo("junit-nv.junitwrite.write_close")
+    var buf: [u8] = []
+    put_close_tag(var buf, 0, "testsuites", o)
+    list.concat(out, buf)
 
 // The whole report as a string.
 //
@@ -222,7 +577,43 @@ pub fn write_close(out: [u8], o: JunitWriteOptions) -> [u8] []
 // ```
 pub fn to_str(r: junitsuite.JunitReport,
               o: JunitWriteOptions) -> Result<Str, juniterror.JunitFault> []
-    todo("junit-nv.junitwrite.to_str")
+    if let Some(f) = report_fault(r, o)
+        return Err(f)
+    Ok(bytes.to_str(bytes.from_byte_list(report_bytes(r, o))))
+
+// How many bytes the character at `i` takes when XML 1.0 section 2.2
+// admits it.  A character the section does not admit answers its length
+// negated, and a byte that does not begin a character at all answers
+// `-1`.
+fn char_len(text: Str, i: Int) -> Int
+    let b = str.byte_at_or(text, i, 0)
+    if b < 128
+        if xmlparse.is_xml_char(b)
+            return 1
+        return 0 - 2
+    var need = 0
+    var code = 0
+    if b >= 194 and b <= 223
+        need = 1
+        code = b & 31
+    else if b >= 224 and b <= 239
+        need = 2
+        code = b & 15
+    else if b >= 240 and b <= 244
+        need = 3
+        code = b & 7
+    else
+        return 0 - 1
+    for k in 1..need + 1
+        let c = str.byte_at_or(text, i + k, 0 - 1)
+        if c < 0 or (c & 192) != 128
+            return 0 - 1
+        code = (code << 6) | (c & 63)
+    if need == 2 and code < 2048 or need == 3 and code < 65536
+        return 0 - 1
+    if not xmlparse.is_xml_char(code)
+        return 0 - need - 1
+    need + 1
 
 // The same text with every character XML 1.0 cannot carry removed.
 //
@@ -242,7 +633,18 @@ pub fn to_str(r: junitsuite.JunitReport,
 //     println(junitwrite.sanitize_text("progress\u{1}bar"))
 // ```
 pub fn sanitize_text(text: Str) -> Str []
-    todo("junit-nv.junitwrite.sanitize_text")
+    var parts: [Str] = []
+    var i = 0
+    while i < str.len(text)
+        let n = char_len(text, i)
+        if n > 0
+            list.push(parts, str.slice(text, i, i + n))
+            i = i + n
+        else if n < 0 - 1
+            i = i + (0 - n - 1)
+        else
+            i = i + 1
+    str.join(parts, "")
 
 // The byte offset of the first character XML 1.0 cannot carry, or
 // `-1`.
@@ -257,15 +659,21 @@ pub fn sanitize_text(text: Str) -> Str []
 //     println("${junitwrite.first_unwritable("hello")}")
 // ```
 pub fn first_unwritable(text: Str) -> Int []
-    todo("junit-nv.junitwrite.first_unwritable")
+    var i = 0
+    while i < str.len(text)
+        let n = char_len(text, i)
+        if n < 0
+            return i
+        i = i + n
+    0 - 1
 
 // A duration as the `time` attribute writes it: seconds, with
-// `decimals` places.
+// `decimals` places, and never a rounded digit.
 //
-// `1500` microseconds with three places is `"0.002"`, because the
-// attribute is rounded to what it can hold.  A value that would lose a
-// non-zero digit is `None`, which is what the writer turns into
-// `JunitTimeTooPrecise`.
+// `125000` microseconds with three places is `"0.125"`.  A value that
+// would lose a non-zero digit is `None`, which is what the writer turns
+// into `JunitTimeTooPrecise`: `1500` microseconds with three places
+// does not fit.
 //
 // ```novo
 // use junitwrite
@@ -276,4 +684,16 @@ pub fn first_unwritable(text: Str) -> Int []
 //         None       => println("needs more decimal places")
 // ```
 pub fn format_time(time_us: Int, decimals: Int) -> ?Str []
-    todo("junit-nv.junitwrite.format_time")
+    if time_us < 0 or decimals < 0
+        return None
+    let seconds = time_us / 1000000
+    let micro = time_us % 1000000
+    let padded = str.pad_left(str.from_int(micro), 6, "0")
+    if decimals < 6 and str.replace(str.slice(padded, decimals, 6), "0", "") != ""
+        return None
+    if decimals == 0
+        return Some(str.from_int(seconds))
+    var frac = str.slice(padded, 0, decimals)
+    if decimals > 6
+        frac = padded + str.repeat("0", decimals - 6)
+    Some("${seconds}.${frac}")

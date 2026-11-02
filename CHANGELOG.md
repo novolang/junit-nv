@@ -5,6 +5,74 @@ All notable changes to junit-nv are recorded here. The format is
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 with the pre-1.0 rule that a breaking change bumps the MINOR number.
 
+## 0.1.0 — 2026-10-12
+
+**The implementation.** Every body the 0.0.1 interface published is
+written — the 54 `todo()`s under `src/` are gone — and the four API
+suites that were waiting on them are green, as are the doc examples in
+all four modules (`novo test src/junitread.nv` and its three
+neighbours). The published signatures, effect rows and refusals are
+unchanged; the version moves because nothing was implemented before.
+
+### Added
+
+- `junitsuite.with_id` — the same suite with an `id`. `JunitSuite.id`
+  was published as a field with no builder, so the reader could not
+  record the index a `testsuite` element has in the document it came
+  from, and `-1` — the value `suite` starts with — is what the writer
+  reads as "the file did not say". The one addition to the surface.
+
+### Changed
+
+- The `novo` floor moves from `>= 0.9.0` to `>= 0.20.2`, the toolchain
+  the implementation was built, tested and measured on.
+- `stability` moves from `draft` to `experimental`: the bodies are in,
+  and no program outside this package has used the surface yet.
+- `tests/junitwrite_edge_tests.nv` is new: the counts on a written
+  document against the cases and the root's counts against the sum of
+  its suites, the four case shapes read back as the four outcomes, a
+  failure's text through the escaping and back, and the exact text of a
+  `timestamp` and a `time`. It also carries the half of each module the
+  four API suites leave alone: the element the writer names when it
+  refuses a character XML cannot carry, every field of a report written
+  one refusal at a time, the attributes the reader fills from reports
+  this writer never emits (`id`, `file`, `line`, the suite's
+  `properties`, `system-out` and `system-err`), the reader's refusals
+  for a case with two outcome elements and for a `time` that is not a
+  number of seconds, and how many bytes a character takes, including
+  sequences that encode no character at all.
+
+### Known
+
+- **A `??` with a literal fallback is avoided in `src/`.** The miss
+  path of `<call returning ?T> ?? <literal>` hands its caller a
+  `.rodata`-backed `Str` that `novo_dup_rc_v` then writes a refcount
+  into, and the program dies with SIGSEGV — but only when the entry
+  call sits in another package, which is why the reader's own tests
+  never saw it and the doc-example harness did. Every site is written
+  with `match` instead (`attr_text`, `child_text_or` and `line_of` in
+  `junitread.nv`, `time_text` in `junitwrite.nv`), each naming
+  `bugs/memory-perceus/the-miss-path-of-a-null-coalesce-over-a-package-call-with-a-literal-fallback-hands-dup-rc-v-a-rodata-str-segv.md`
+  in the novo repository. The workaround comes out when that filing is
+  fixed and the toolchain carrying the fix is verified here.
+- **The buffer parameter copies.** `write_report`, `write_suite`,
+  `write_open` and `write_close` take `out: [u8]` — a plain parameter,
+  as the interface published it — and append with `list.concat`, so
+  each call copies the bytes already in the buffer. A run appending
+  ten thousand suites to one buffer is doing quadratic copying. A
+  `var out: [u8]` would append in place, and the change is a signature
+  change, so it is recorded here rather than made in a minor release.
+- **`rerunFailure` and `flakyFailure` are still not read.** See the
+  README's what-is-not-included list; the refusals are unchanged.
+- **One line under `src/` is excused, not covered.** The `None` arm of
+  `junitwrite.time_text` carries `// cov: skip — every caller reaches
+  here through a `duration_fault` that refused a duration this cannot
+  render, before any attribute is written`. The three call sites — the
+  `testsuites` open tag, a suite's attributes and a case's — each ask
+  `duration_fault` first, and that guard asks `format_time`, so the arm
+  is reached only if the guard is removed. Every other line under
+  `src/` is covered by the five suites.
+
 ## 0.0.2 — 2026-09-28
 
 The dependency ranges move to the dependencies' current releases.  A

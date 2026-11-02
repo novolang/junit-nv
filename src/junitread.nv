@@ -26,6 +26,7 @@
 
 use junitsuite
 use juniterror
+use xmlerror
 use xmltree
 
 // The report a document holds.
@@ -44,7 +45,154 @@ use xmltree
 //         Err(fault) => println(fault.message())
 // ```
 pub fn read(source: Str) -> Result<junitsuite.JunitReport, juniterror.JunitFault> []
-    todo("junit-nv.junitread.read")
+    read_document(xmltree.build(source))
+
+// The first fault xml-nv recorded that is not a prefix nobody declared.
+//
+// An `xml:lang`-less document using a prefix it never bound is a real
+// report written by a real tool, and xml-nv records it and reads on, so
+// this reader reads on too.  Every other issue is a document that is
+// not well-formed, which is a fact a caller would otherwise get wrong.
+fn issues_fault(doc: xmltree.XmlDocument) -> ?juniterror.JunitFault
+    for issue in xmltree.issues_of(doc)
+        if issue.kind != XmlUndeclaredPrefix
+            return Some(JunitNotXml(issue.at, xmlerror.kind_name(issue.kind)))
+    None
+
+// The element a caller's index names: the root element for the document
+// node, and the node itself otherwise.
+fn element_at(doc: xmltree.XmlDocument, index: Int) -> Int
+    if index == xmltree.root(doc)
+        return xmltree.document_element(doc) ?? index
+    index
+
+// The element children of `i` with this local name, in order.
+fn children_named(doc: xmltree.XmlDocument, i: Int, name: Str) -> [Int]
+    list.filter(xmltree.element_children(doc, i), c => xmltree.local_of(doc, c) == name)
+
+// The text of the first child element with this local name, or `None`
+// when there is none.  The text is what the element held, not trimmed:
+// whitespace in character data is content.
+fn child_text(doc: xmltree.XmlDocument, i: Int, name: Str) -> ?Str
+    for c in xmltree.element_children(doc, i)
+        if xmltree.local_of(doc, c) == name
+            return Some(xmltree.inner_text(doc, c))
+    None
+
+// The text of the first child element with this local name, or `""`
+// when there is none.
+//
+// The `match` is the workaround at `attr_text` below, applied where the
+// receiver is a call in this package rather than a package call: the
+// fallback goes through the same miss path, and the same `.rodata`
+// handle comes out of it when the caller sits in another package.
+fn child_text_or(doc: xmltree.XmlDocument, i: Int, name: Str) -> Str
+    match child_text(doc, i, name)
+        Some(t) => t
+        None    => ""
+
+// One attribute's value, or `""` when the element has not got it.
+//
+// Spelled with `match`, not with `xmltree.attr(doc, i, name) ?? ""`: the
+// miss path of a `??` whose receiver is a package call and whose fallback
+// is a literal hands its caller a `.rodata`-backed `Str` that
+// `novo_dup_rc_v` then writes a refcount into, and the program dies with
+// SIGSEGV whenever the entry call sits in another package.  The four doc
+// examples in this file reach it.
+fn attr_text(doc: xmltree.XmlDocument, i: Int, name: Str) -> Str
+    match xmltree.attr(doc, i, name)
+        Some(v) => v
+        None    => ""
+
+// The `time` attribute of an element as microseconds: `0` when the
+// element carries none, and a refusal when it carries one that is not a
+// number.
+fn time_attr(doc: xmltree.XmlDocument, i: Int,
+             element: Str) -> Result<Int, juniterror.JunitFault> []
+    let Some(text) = xmltree.attr(doc, i, "time") else return Ok(0)
+    let Some(us) = parse_time(text) else return Err(JunitBadTime(element, text))
+    Ok(us)
+
+// The `id` attribute as a number, or `-1` when it is absent or is not
+// one.
+fn id_of(doc: xmltree.XmlDocument, i: Int) -> Int
+    match str.to_int(attr_text(doc, i, "id"))
+        Some(n) => n
+        None    => 0 - 1
+
+// The `line` attribute as a number, or `0` when it is absent or is not
+// one: a line number nobody can use is not worth refusing a file over.
+//
+// The `match` is the workaround at `attr_text` above, applied where the
+// fallback is a number.
+fn line_of(doc: xmltree.XmlDocument, i: Int) -> Int
+    match str.to_int(attr_text(doc, i, "line"))
+        Some(n) => n
+        None    => 0
+
+// Every `property` under the `properties` elements of `i`, in order.
+//
+// A suite and a case both carry them: the schema puts them on the
+// suite, and several writers put them on the case as well.
+fn properties_of(doc: xmltree.XmlDocument, i: Int) -> [junitsuite.JunitProperty]
+    var out: [junitsuite.JunitProperty] = []
+    for p in children_named(doc, i, "properties")
+        for e in children_named(doc, p, "property")
+            list.push(out, junitsuite.property(attr_text(doc, e, "name"),
+                                               attr_text(doc, e, "value")))
+    out
+
+// Whether an element name is one of the three outcome elements.
+fn is_outcome_name(tag: Str) -> Bool
+    tag == "failure" or tag == "error" or tag == "skipped"
+
+// The outcome elements a case element holds, in document order.
+fn outcome_nodes(doc: xmltree.XmlDocument, i: Int) -> [Int]
+    list.filter(xmltree.element_children(doc, i), c => is_outcome_name(xmltree.local_of(doc, c)))
+
+// One outcome element read into its arm.
+fn outcome_at(doc: xmltree.XmlDocument, node: Int) -> junitsuite.JunitOutcome
+    let msg = attr_text(doc, node, "message")
+    let kind = attr_text(doc, node, "type")
+    let text = xmltree.inner_text(doc, node)
+    let tag = xmltree.local_of(doc, node)
+    if tag == "failure"
+        return JunitFailure(msg, kind, text)
+    if tag == "error"
+        return JunitErrored(msg, kind, text)
+    JunitSkipped(msg)
+
+// The one outcome a case carries: a pass when it holds no outcome
+// element, and a refusal when it holds two.
+fn outcome_of(doc: xmltree.XmlDocument, i: Int,
+              name: Str) -> Result<junitsuite.JunitOutcome, juniterror.JunitFault> []
+    let nodes = outcome_nodes(doc, i)
+    if list.len(nodes) > 1
+        return Err(JunitTwoOutcomes(name))
+    if list.len(nodes) == 0
+        return Ok(JunitPassed)
+    Ok(outcome_at(doc, nodes[0]))
+
+// The report a tree holds, its issues already checked.
+fn read_tree(doc: xmltree.XmlDocument) -> Result<junitsuite.JunitReport, juniterror.JunitFault> []
+    let Some(root) = xmltree.document_element(doc) else return Err(JunitWrongRoot(""))
+    let kind = xmltree.local_of(doc, root)
+    if kind != "testsuites" and kind != "testsuite"
+        return Err(JunitWrongRoot(xmltree.tag_of(doc, root)))
+    let time_us = match time_attr(doc, root, kind)
+        Ok(us) => us
+        Err(f) =>
+            return Err(f)
+    var run_name = ""
+    if kind == "testsuites"
+        run_name = attr_text(doc, root, "name")
+    var suites: [junitsuite.JunitSuite] = []
+    for i in suite_nodes(doc)
+        match read_suite(doc, i)
+            Ok(s)  => list.push(suites, s)
+            Err(f) =>
+                return Err(f)
+    Ok(junitsuite.with_run(junitsuite.report(suites), run_name, time_us))
 
 // The report an already-parsed document holds.
 //
@@ -62,7 +210,9 @@ pub fn read(source: Str) -> Result<junitsuite.JunitReport, juniterror.JunitFault
 //         Err(fault) => println(fault.message())
 // ```
 pub fn read_document(doc: xmltree.XmlDocument) -> Result<junitsuite.JunitReport, juniterror.JunitFault> []
-    todo("junit-nv.junitread.read_document")
+    if let Some(f) = issues_fault(doc)
+        return Err(f)
+    read_tree(doc)
 
 // One `testsuite` element, by its node index in the document.
 //
@@ -81,7 +231,29 @@ pub fn read_document(doc: xmltree.XmlDocument) -> Result<junitsuite.JunitReport,
 // ```
 pub fn read_suite(doc: xmltree.XmlDocument,
                   index: Int) -> Result<junitsuite.JunitSuite, juniterror.JunitFault> []
-    todo("junit-nv.junitread.read_suite")
+    let i = element_at(doc, index)
+    let Some(name) = xmltree.attr(doc, i, "name") else return Err(JunitMissingAttr("testsuite", "name"))
+    let time_us = match time_attr(doc, i, "testsuite")
+        Ok(us) => us
+        Err(f) =>
+            return Err(f)
+    var cases: [junitsuite.JunitCase] = []
+    for n in case_nodes(doc, i)
+        match read_case(doc, n)
+            Ok(c)  => list.push(cases, c)
+            Err(f) =>
+                return Err(f)
+    var s = junitsuite.suite(name)
+    s = junitsuite.with_origin(s, attr_text(doc, i, "hostname"),
+                              attr_text(doc, i, "package"))
+    s = junitsuite.with_timestamp(s, attr_text(doc, i, "timestamp"))
+    s = junitsuite.with_id(s, id_of(doc, i))
+    s = junitsuite.with_suite_time(s, time_us)
+    s = junitsuite.with_cases(s, cases)
+    s = junitsuite.with_properties(s, properties_of(doc, i))
+    s = junitsuite.with_suite_output(s, child_text_or(doc, i, "system-out"),
+                                    child_text_or(doc, i, "system-err"))
+    Ok(s)
 
 // One `testcase` element, by its node index in the document.
 //
@@ -97,7 +269,24 @@ pub fn read_suite(doc: xmltree.XmlDocument,
 // ```
 pub fn read_case(doc: xmltree.XmlDocument,
                  index: Int) -> Result<junitsuite.JunitCase, juniterror.JunitFault> []
-    todo("junit-nv.junitread.read_case")
+    let i = element_at(doc, index)
+    let Some(name) = xmltree.attr(doc, i, "name") else return Err(JunitMissingAttr("testcase", "name"))
+    let time_us = match time_attr(doc, i, "testcase")
+        Ok(us) => us
+        Err(f) =>
+            return Err(f)
+    let outcome = match outcome_of(doc, i, name)
+        Ok(o)  => o
+        Err(f) =>
+            return Err(f)
+    var c = junitsuite.case(name, attr_text(doc, i, "classname"))
+    c = junitsuite.with_time(c, time_us)
+    c = junitsuite.with_outcome(c, outcome)
+    c = junitsuite.with_system_out(c, child_text_or(doc, i, "system-out"))
+    c = junitsuite.with_system_err(c, child_text_or(doc, i, "system-err"))
+    c = junitsuite.at_source(c, attr_text(doc, i, "file"), line_of(doc, i))
+    c = junitsuite.with_case_properties(c, properties_of(doc, i))
+    Ok(c)
 
 // The name of the document's root element when it is one this package
 // reads: `"testsuites"`, `"testsuite"`, or `""` for anything else.
@@ -114,7 +303,11 @@ pub fn read_case(doc: xmltree.XmlDocument,
 //     println(junitread.root_kind(doc))
 // ```
 pub fn root_kind(doc: xmltree.XmlDocument) -> Str []
-    todo("junit-nv.junitread.root_kind")
+    let Some(root) = xmltree.document_element(doc) else return ""
+    let kind = xmltree.local_of(doc, root)
+    if kind == "testsuites" or kind == "testsuite"
+        return kind
+    ""
 
 // Whether a document is a JUnit report at all.
 //
@@ -131,7 +324,7 @@ pub fn root_kind(doc: xmltree.XmlDocument) -> Str []
 //     println("${junitread.is_junit(doc)}")
 // ```
 pub fn is_junit(doc: xmltree.XmlDocument) -> Bool []
-    todo("junit-nv.junitread.is_junit")
+    root_kind(doc) != ""
 
 // A `time` attribute as an integer count of microseconds, or `None`
 // when it is not a decimal number of seconds.
@@ -151,7 +344,40 @@ pub fn is_junit(doc: xmltree.XmlDocument) -> Bool []
 //         None     => println("not a duration")
 // ```
 pub fn parse_time(text: Str) -> ?Int []
-    todo("junit-nv.junitread.parse_time")
+    let n = str.len(text)
+    var whole = 0
+    var digits = 0
+    var micro = 0
+    var micro_digits = 0
+    var seen_dot = false
+    var i = 0
+    while i < n
+        let b = str.byte_at_or(text, i, 0)
+        if b == 46
+            if seen_dot or digits == 0
+                return None
+            seen_dot = true
+        else if b >= 48 and b <= 57
+            if seen_dot
+                if micro_digits < 6
+                    micro = micro * 10 + (b - 48)
+                    micro_digits = micro_digits + 1
+            else
+                // More seconds than a count of microseconds can hold:
+                // the sum below would not fit one.
+                if digits > 11
+                    return None
+                whole = whole * 10 + (b - 48)
+                digits = digits + 1
+        else
+            return None
+        i = i + 1
+    if digits == 0 or seen_dot and micro_digits == 0
+        return None
+    while micro_digits < 6
+        micro = micro * 10
+        micro_digits = micro_digits + 1
+    Some(whole * 1000000 + micro)
 
 // Every `testcase` node index under a suite node, in document order.
 //
@@ -168,7 +394,7 @@ pub fn parse_time(text: Str) -> ?Int []
 //     println("${list.len(junitread.case_nodes(doc, xmltree.root(doc)))}")
 // ```
 pub fn case_nodes(doc: xmltree.XmlDocument, suite_index: Int) -> [Int] []
-    todo("junit-nv.junitread.case_nodes")
+    children_named(doc, element_at(doc, suite_index), "testcase")
 
 // Every `testsuite` node index in a document, in document order,
 // including a bare `testsuite` root and suites nested inside another
@@ -186,4 +412,11 @@ pub fn case_nodes(doc: xmltree.XmlDocument, suite_index: Int) -> [Int] []
 //     println("${list.len(junitread.suite_nodes(doc))}")
 // ```
 pub fn suite_nodes(doc: xmltree.XmlDocument) -> [Int] []
-    todo("junit-nv.junitread.suite_nodes")
+    let Some(root) = xmltree.document_element(doc) else return []
+    var out: [Int] = []
+    if xmltree.local_of(doc, root) == "testsuite"
+        list.push(out, root)
+    for i in xmltree.descendants(doc, root)
+        if xmltree.local_of(doc, i) == "testsuite"
+            list.push(out, i)
+    out

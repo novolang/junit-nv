@@ -1,9 +1,8 @@
 // juniterror_tests.nv — the division the error type exists to make.
 //
-// RED ON PURPOSE: every assertion reaches `not implemented:
-// junit-nv.juniterror.<fn>`.  What is asserted is that a fault in the
-// report being written is told apart from a fault in a report being
-// read, because the two have different responses.
+// What is asserted is that a fault in the report being written is told
+// apart from a fault in a report being read, because the two have
+// different responses.
 
 use std.test
 use juniterror
