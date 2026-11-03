@@ -25,7 +25,7 @@ maintainers = ["novo-lang"]
 # Built, tested and measured on 0.20.2.  The floor is the toolchain the
 # release was checked against rather than the oldest one that might
 # work.
-novo        = ">= 0.20.2"
+novo        = ">= 0.23.0"
 
 # A library: no `main`, so `novo pkg build` type-checks and
 # effect-checks every module under `src/` and writes no binary.

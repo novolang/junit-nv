@@ -73,6 +73,8 @@ unchanged; the version moves because nothing was implemented before.
   is reached only if the guard is removed. Every other line under
   `src/` is covered by the five suites.
 
+This release requires novo 0.23.0 or later.
+
 ## 0.0.2 — 2026-09-28
 
 The dependency ranges move to the dependencies' current releases.  A
